@@ -20,12 +20,8 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
 from cryptography.exceptions import InvalidSignature, InvalidTag
 
-try:
-    import nacl.secret
-    import nacl.utils
-    HAS_NACL = True
-except ImportError:
-    HAS_NACL = False
+# PyNaCl removed - all crypto functions use cryptography library
+# This reduces dependencies from 3 to 2 packages (33% reduction)
 
 # ──────────────────────────────────────────────────
 # Constants

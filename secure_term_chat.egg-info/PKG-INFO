@@ -12,7 +12,6 @@ Requires-Python: >=3.12
 Description-Content-Type: text/markdown
 License-File: LICENSE
 Requires-Dist: cryptography>=42.0
-Requires-Dist: pynacl>=1.5
 Requires-Dist: textual>=0.60
 Provides-Extra: dev
 Requires-Dist: pytest>=7.4.0; extra == "dev"

@@ -1,6 +1,5 @@
 # Core crypto
 cryptography>=42.0
-pynacl>=1.5
 
 # Terminal UI
 textual>=0.60
