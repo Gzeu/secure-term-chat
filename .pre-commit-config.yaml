@@ -40,7 +40,7 @@ repos:
     hooks:
       - id: bandit
         args: ["-r", "."]
-        pass_filenames: 0
+        pass_filenames: false
 
   - repo: local
     hooks:
@@ -48,6 +48,6 @@ repos:
         name: pytest-check
         entry: pytest
         language: system
-        pass_filenames: 0
+        pass_filenames: false
         args: ["--collect-only", "-q"]
         always_run: true
