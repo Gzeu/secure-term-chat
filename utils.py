@@ -206,7 +206,8 @@ def derive_session_key(shared_secret: bytes | bytearray, salt: bytes | None = No
 
 def derive_room_key(shared_secret: bytes | bytearray, room_name: bytes, salt: bytes | None = None) -> Tuple[bytearray, bytes]:
     if salt is None:
-        salt = secrets.token_bytes(32)
+        # Use deterministic salt for room keys so all clients derive same key
+        salt = hashlib.sha256(HKDF_INFO_ROOM + b":" + room_name).digest()
     info = HKDF_INFO_ROOM + b":" + room_name
     key = hkdf_derive(shared_secret, salt, info, 32)
     return key, salt
@@ -342,6 +343,7 @@ class MessageType(IntEnum):
     ROOM_LIST    = 11
     USER_LIST    = 12
     DISCONNECT   = 13
+    ROOM_KEY     = 14
 
 
 def build_frame(msg_type: MessageType, payload: bytes, identity: IdentityKey) -> bytes:

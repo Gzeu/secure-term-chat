@@ -10,6 +10,7 @@ import json
 import logging
 import secrets
 import struct
+import ssl
 import time
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
@@ -32,6 +33,11 @@ RATE_WINDOW    = 5.0
 RATE_MAX_MSGS  = 30
 MAX_QUEUE_SIZE = 512
 MAX_FRAME_SIZE = 2 * 1024 * 1024
+
+# TLS Configuration
+TLS_CERT_FILE = "server_cert.pem"
+TLS_KEY_FILE = "server_key.pem"
+TLS_CA_FILE = "ca_cert.pem"  # For self-signed cert
 
 
 class RateLimiter:
@@ -76,12 +82,84 @@ class Peer:
         }
 
 
+def generate_tls_certificates():
+    """Generate self-signed TLS certificates for the server."""
+    from cryptography import x509
+    from cryptography.x509.oid import NameOID
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    import datetime
+    import ipaddress
+    
+    # Generate private key
+    private_key = rsa.generate_private_key(
+        public_exponent=65537,
+        key_size=2048,
+    )
+    
+    # Create certificate
+    subject = issuer = x509.Name([
+        x509.NameAttribute(NameOID.COUNTRY_NAME, "US"),
+        x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, "CA"),
+        x509.NameAttribute(NameOID.LOCALITY_NAME, "San Francisco"),
+        x509.NameAttribute(NameOID.ORGANIZATION_NAME, "secure-term-chat"),
+        x509.NameAttribute(NameOID.COMMON_NAME, "localhost"),
+    ])
+    
+    cert = x509.CertificateBuilder().subject_name(
+        subject
+    ).issuer_name(
+        issuer
+    ).public_key(
+        private_key.public_key()
+    ).serial_number(
+        x509.random_serial_number()
+    ).not_valid_before(
+        datetime.datetime.utcnow()
+    ).not_valid_after(
+        datetime.datetime.utcnow() + datetime.timedelta(days=365)
+    ).add_extension(
+        x509.SubjectAlternativeName([
+            x509.DNSName("localhost"),
+            x509.IPAddress(ipaddress.IPv4Address("127.0.0.1")),
+        ]),
+        critical=False,
+    ).sign(private_key, hashes.SHA256())
+    
+    # Save certificate and private key
+    with open(TLS_CERT_FILE, "wb") as f:
+        f.write(cert.public_bytes(serialization.Encoding.PEM))
+    
+    with open(TLS_KEY_FILE, "wb") as f:
+        f.write(private_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        ))
+    
+    log.info(f"Generated TLS certificates: {TLS_CERT_FILE}, {TLS_KEY_FILE}")
+    return cert, private_key
+
+
 class ChatServer:
-    def __init__(self):
+    def __init__(self, use_tls: bool = False):
         self._peers: Dict[str, Peer] = {}
         self._rooms: Dict[str, Set[str]] = defaultdict(set)
+        self._room_keys: Dict[str, str] = {}  # room -> encrypted room_key (hex)
+        self._use_tls = use_tls
         self._server_identity = IdentityKey.generate()
         log.info(f"Server fingerprint: {self._server_identity.fingerprint()}")
+        
+        if use_tls:
+            self._ensure_tls_certificates()
+    
+    def _ensure_tls_certificates(self):
+        """Ensure TLS certificates exist."""
+        import os
+        if not os.path.exists(TLS_CERT_FILE) or not os.path.exists(TLS_KEY_FILE):
+            generate_tls_certificates()
+        else:
+            log.info(f"Using existing TLS certificates: {TLS_CERT_FILE}")
 
     async def handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         addr = writer.get_extra_info("peername", ("?", 0))
@@ -197,9 +275,11 @@ class ChatServer:
         elif t == MessageType.KEY_EXCHANGE:
             await self._relay_key_exchange(peer, frame)
         elif t == MessageType.ROOM_LIST:
-            await self._send_room_list(peer)
+            await self._handle_room_list(peer, frame)
         elif t == MessageType.USER_LIST:
             await self._send_user_list(peer, frame)
+        elif t == MessageType.ROOM_KEY:
+            await self._handle_room_key(peer, frame)
         elif t == MessageType.PING:
             pong = build_frame(MessageType.PONG, b"", self._server_identity)
             await peer.queue.put(pong)
@@ -237,6 +317,20 @@ class ChatServer:
         roster = encode_json_payload({"event": "roster", "room": room, "members": members})
         roster_frame = build_frame(MessageType.USER_LIST, roster, self._server_identity)
         await peer.queue.put(roster_frame)
+        
+        # Send room key if it exists
+        if room in self._room_keys:
+            log.info(f"Sending room key to {peer.nick} for #{room}")
+            log.info(f"Sending key value: {self._room_keys[room]}")
+            payload = encode_json_payload({
+                "room": room,
+                "from": "server",
+                "encrypted_key": self._room_keys[room],
+            })
+            key_frame = build_frame(MessageType.ROOM_KEY, payload, self._server_identity)
+            await peer.queue.put(key_frame)
+        else:
+            log.info(f"No room key exists for #{room} - new member {peer.nick} should generate")
 
     async def _relay_room(self, peer: Peer, frame: dict) -> None:
         try:
@@ -300,15 +394,56 @@ class ChatServer:
         relay_frame = build_frame(MessageType.FILE_CHUNK, relay, self._server_identity)
         await self._broadcast_room(room, relay_frame, exclude=peer.nick)
 
-    async def _send_room_list(self, peer: Peer) -> None:
-        payload = encode_json_payload({
-            "rooms": [
-                {"name": r, "count": len(m)}
-                for r, m in self._rooms.items()
-            ]
-        })
-        frame = build_frame(MessageType.ROOM_LIST, payload, self._server_identity)
-        await peer.queue.put(frame)
+    async def _handle_room_key(self, peer: Peer, frame: dict) -> None:
+        """Handle room key distribution from room creator."""
+        try:
+            info = decode_json_payload(frame["payload"])
+            room = info["room"]
+            encrypted_key = info["encrypted_key"]  # hex string
+        except Exception:
+            return
+        
+        if room not in peer.rooms:
+            log.warning(f"Room key from non-member {peer.nick} for #{room}")
+            return
+        
+        if room not in self._room_keys:
+            # First time: store the room key
+            self._room_keys[room] = encrypted_key
+            log.info(f"Room key stored for #{room} by {peer.nick}")
+            log.info(f"Stored key value: {encrypted_key}")
+            
+            # Broadcast to all current members (including sender for confirmation)
+            payload = encode_json_payload({
+                "room": room,
+                "from": peer.nick,
+                "encrypted_key": encrypted_key,
+            })
+            key_frame = build_frame(MessageType.ROOM_KEY, payload, self._server_identity)
+            await self._broadcast_room(room, key_frame)
+        else:
+            # Room key already exists, ignore or update
+            log.info(f"Room key already exists for #{room}, ignoring from {peer.nick}")
+
+    async def _handle_room_list(self, peer: Peer, frame: dict) -> None:
+        """Handle room list request from client."""
+        try:
+            info = decode_json_payload(frame["payload"])
+            action = info.get("action", "")
+        except Exception:
+            action = ""
+        
+        if action == "list_rooms":
+            rooms_data = {}
+            for room_name, members in self._rooms.items():
+                rooms_data[room_name] = {
+                    "member_count": len(members),
+                    "members": list(members)
+                }
+            
+            payload = encode_json_payload({"rooms": rooms_data})
+            response_frame = build_frame(MessageType.ROOM_LIST, payload, self._server_identity)
+            await peer.queue.put(response_frame)
 
     async def _send_user_list(self, peer: Peer, frame: dict) -> None:
         try:
@@ -374,16 +509,34 @@ async def main():
     parser.add_argument("--host",  default="0.0.0.0")
     parser.add_argument("--port",  type=int, default=12345)
     parser.add_argument("--debug", action="store_true")
+    parser.add_argument("--tls", action="store_true", help="Enable TLS encryption")
     args = parser.parse_args()
 
     if args.debug:
         logging.getLogger().setLevel(logging.DEBUG)
 
-    srv    = ChatServer()
-    server = await asyncio.start_server(
-        srv.handle_client, args.host, args.port,
-        limit=MAX_FRAME_SIZE + 8,
-    )
+    srv    = ChatServer(use_tls=args.tls)
+    
+    if args.tls:
+        # Create SSL context for TLS server
+        ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+        ssl_context.load_cert_chain(TLS_CERT_FILE, TLS_KEY_FILE)
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE  # Clients verify via fingerprinting
+        
+        server = await asyncio.start_server(
+            srv.handle_client, args.host, args.port,
+            ssl=ssl_context,
+            limit=MAX_FRAME_SIZE + 8,
+        )
+        log.info(f"🔒 TLS enabled - Listening on secure connections")
+    else:
+        server = await asyncio.start_server(
+            srv.handle_client, args.host, args.port,
+            limit=MAX_FRAME_SIZE + 8,
+        )
+        log.info("⚠️  TLS disabled - Plain text connections only")
+    
     addrs = ", ".join(str(s.getsockname()) for s in server.sockets)
     log.info(f"Listening on {addrs}")
     log.info(f"Server FP: {srv._server_identity.fingerprint()}")
