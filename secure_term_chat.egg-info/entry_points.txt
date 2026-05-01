@@ -1,0 +1,3 @@
+[console_scripts]
+secure-term-chat = client:main
+secure-term-chat-server = server:main

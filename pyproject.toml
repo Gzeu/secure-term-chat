@@ -1,19 +1,22 @@
 [build-system]
 requires = ["setuptools>=68"]
-build-backend = "setuptools.backends.legacy:build"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "secure-term-chat"
 version = "1.0.0"
 description = "Anonymous E2EE encrypted terminal chat with TLS support - Production Ready — XChaCha20-Poly1305, X25519, Ed25519, Double Ratchet"
 readme = "README.md"
-license = { text = "MIT" }
+license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
     "cryptography>=42.0",
     "pynacl>=1.5",
     "textual>=0.60",
 ]
+
+[tool.setuptools]
+py-modules = ["client", "server", "utils", "keystore"]
 
 [project.scripts]
 secure-term-chat-server = "server:main"
