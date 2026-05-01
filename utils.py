@@ -1,11 +1,11 @@
 # utils.py — Crypto Primitives for secure-term-chat
-# XChaCha20-Poly1305 | X25519 ECDH | Ed25519 | HKDF-SHA512 | Double Ratchet-inspired
+# XChaCha20-Poly1305 | X25519 ECDH | Ed25519 | HKDF-SHA512 | Symmetric Ratchet
 # pip install cryptography pynacl
 
 from __future__ import annotations
 import os
+import re
 import time
-import hmac
 import hashlib
 import struct
 import secrets
@@ -27,48 +27,82 @@ try:
 except ImportError:
     HAS_NACL = False
 
-# ──────────────────────────────────────────────
+# ──────────────────────────────────────────────────
 # Constants
-# ──────────────────────────────────────────────
-HKDF_INFO_SESSION   = b"secure-term-chat-v1-session"
-HKDF_INFO_ROOM      = b"secure-term-chat-v1-room"
-HKDF_INFO_RATCHET   = b"secure-term-chat-v1-ratchet"
-NONCE_SIZE          = 24   # XChaCha20 nonce
-MAX_TIMESTAMP_SKEW  = 30   # seconds, anti-replay
-MAX_NONCE_CACHE     = 10_000
+# ──────────────────────────────────────────────────
+HKDF_INFO_SESSION  = b"secure-term-chat-v1-session"
+HKDF_INFO_ROOM     = b"secure-term-chat-v1-room"
+HKDF_INFO_RATCHET  = b"secure-term-chat-v1-ratchet"
+NONCE_SIZE         = 24    # XChaCha20 nonce
+MAX_TIMESTAMP_SKEW = 30    # seconds, anti-replay
+MAX_NONCE_CACHE    = 10_000
+
+# Regex for safe nick sanitization (fix: ANSI injection)
+NICK_RE = re.compile(r"[^\w\-.]")  
 
 
-# ──────────────────────────────────────────────
-# Secure memory wipe helper
-# ──────────────────────────────────────────────
+def sanitize_nick(nick: str) -> str:
+    """Strip non-alphanumeric/dash/dot chars to prevent ANSI terminal injection."""
+    return NICK_RE.sub("", nick)[:32]
+
+
+# ──────────────────────────────────────────────────
+# Secure memory wipe
+# FIX: use bytearray internally; wipe_bytearray is reliable.
+# wipe_bytes on immutable bytes is best-effort only.
+# ──────────────────────────────────────────────────
 def secure_wipe(data: bytearray | memoryview) -> None:
     """Overwrite mutable buffer with zeros."""
-    if isinstance(data, (bytearray, memoryview)):
-        for i in range(len(data)):
-            data[i] = 0
+    for i in range(len(data)):
+        data[i] = 0
 
 
-def wipe_bytes(b: bytes) -> None:
-    """Best-effort wipe of an immutable bytes object via ctypes."""
+def wipe_bytearray(b: bytearray) -> None:
+    """Zero a bytearray in-place (reliable wipe)."""
+    secure_wipe(b)
+
+
+def wipe_bytes_besteffort(b: bytes) -> None:
+    """
+    Best-effort wipe of immutable bytes via ctypes.
+    NOTE: This wipes the internal buffer of the bytes object directly.
+    Not guaranteed on all CPython versions/GC states.
+    Prefer using bytearray for sensitive key material.
+    """
     try:
-        ptr = (ctypes.c_char * len(b)).from_buffer_copy(b)
-        ctypes.memset(ptr, 0, len(b))
+        size = len(b)
+        if size == 0:
+            return
+        # Access the ob_val buffer of PyBytesObject
+        offset = ctypes.pythonapi.PyBytes_AsString.argtypes = [ctypes.py_object]
+        buf = (ctypes.c_char * size).from_address(id(b) + ctypes.sizeof(ctypes.c_ssize_t) * 4 + ctypes.sizeof(ctypes.c_void_p))
+        ctypes.memset(buf, 0, size)
     except Exception:
-        pass
+        pass  # fallback: GC will collect
 
 
-# ──────────────────────────────────────────────
+# ──────────────────────────────────────────────────
 # Identity Keys (Ed25519) — long-lived per client
-# ──────────────────────────────────────────────
+# ──────────────────────────────────────────────────
 @dataclass
 class IdentityKey:
     private_key: Ed25519PrivateKey
     public_key: Ed25519PublicKey
+    # FIX: store pub bytes as bytearray for reliable wipe
+    _pub_bytes: bytearray = field(default=None, repr=False)
+
+    def __post_init__(self):
+        raw = self.public_key.public_bytes(
+            serialization.Encoding.Raw,
+            serialization.PublicFormat.Raw,
+        )
+        self._pub_bytes = bytearray(raw)
 
     @classmethod
     def generate(cls) -> "IdentityKey":
         priv = Ed25519PrivateKey.generate()
-        return cls(priv, priv.public_key())
+        obj = cls(priv, priv.public_key())
+        return obj
 
     def sign(self, data: bytes) -> bytes:
         return self.private_key.sign(data)
@@ -81,18 +115,16 @@ class IdentityKey:
             return False
 
     def public_bytes(self) -> bytes:
-        return self.public_key.public_bytes(
-            serialization.Encoding.Raw,
-            serialization.PublicFormat.Raw
-        )
+        return bytes(self._pub_bytes)
 
     def fingerprint(self) -> str:
-        """SHA-256 fingerprint for TOFU display."""
-        digest = hashlib.sha256(self.public_bytes()).hexdigest()
+        digest = hashlib.sha256(bytes(self._pub_bytes)).hexdigest()
         return ":".join(digest[i:i+4] for i in range(0, 32, 4))
 
     def destroy(self) -> None:
-        wipe_bytes(self.public_bytes())
+        """Wipe public key bytearray. Private key handed to GC."""
+        if self._pub_bytes:
+            wipe_bytearray(self._pub_bytes)
 
 
 def identity_from_public_bytes(raw: bytes) -> Ed25519PublicKey:
@@ -112,60 +144,67 @@ def fingerprint_from_bytes(raw: bytes) -> str:
     return ":".join(digest[i:i+4] for i in range(0, 32, 4))
 
 
-# ──────────────────────────────────────────────
+# ──────────────────────────────────────────────────
 # Session Keys (X25519) — ephemeral per session
-# ──────────────────────────────────────────────
+# ──────────────────────────────────────────────────
 @dataclass
 class SessionKey:
     private_key: X25519PrivateKey
     public_key: X25519PublicKey
+    _pub_bytes: bytearray = field(default=None, repr=False)  # FIX: bytearray
     _destroyed: bool = field(default=False, repr=False)
+
+    def __post_init__(self):
+        raw = self.public_key.public_bytes(
+            serialization.Encoding.Raw,
+            serialization.PublicFormat.Raw,
+        )
+        self._pub_bytes = bytearray(raw)
 
     @classmethod
     def generate(cls) -> "SessionKey":
         priv = X25519PrivateKey.generate()
         return cls(priv, priv.public_key())
 
-    def exchange(self, peer_pub_raw: bytes) -> bytes:
-        """Perform ECDH and return raw shared secret."""
+    def exchange(self, peer_pub_raw: bytes) -> bytearray:
+        """ECDH — returns shared secret as bytearray for safe wiping."""
         peer_pub = X25519PublicKey.from_public_bytes(peer_pub_raw)
-        return self.private_key.exchange(peer_pub)
+        raw = self.private_key.exchange(peer_pub)
+        return bytearray(raw)  # FIX: return bytearray
 
     def public_bytes(self) -> bytes:
-        return self.public_key.public_bytes(
-            serialization.Encoding.Raw,
-            serialization.PublicFormat.Raw
-        )
+        return bytes(self._pub_bytes)
 
     def destroy(self) -> None:
         if not self._destroyed:
-            # Best-effort: let GC collect
+            if self._pub_bytes:
+                wipe_bytearray(self._pub_bytes)
             self._destroyed = True
 
 
-# ──────────────────────────────────────────────
+# ──────────────────────────────────────────────────
 # HKDF Key Derivation
-# ──────────────────────────────────────────────
-def hkdf_derive(input_key_material: bytes, salt: bytes, info: bytes, length: int = 32) -> bytes:
-    """HKDF-SHA512 key derivation."""
+# ──────────────────────────────────────────────────
+def hkdf_derive(input_key_material: bytes | bytearray, salt: bytes, info: bytes, length: int = 32) -> bytearray:
+    """HKDF-SHA512. Returns bytearray for safe wipe."""
     hkdf = HKDF(
         algorithm=hashes.SHA512(),
         length=length,
         salt=salt,
         info=info,
     )
-    return hkdf.derive(input_key_material)
+    return bytearray(hkdf.derive(bytes(input_key_material)))
 
 
-def derive_session_key(shared_secret: bytes, salt: bytes | None = None) -> Tuple[bytes, bytes]:
-    """Derive (encryption_key_32, mac_salt_32) from ECDH shared secret."""
+def derive_session_key(shared_secret: bytes | bytearray, salt: bytes | None = None) -> Tuple[bytearray, bytes]:
+    """Returns (enc_key: bytearray, salt: bytes)."""
     if salt is None:
         salt = secrets.token_bytes(32)
     key = hkdf_derive(shared_secret, salt, HKDF_INFO_SESSION, 32)
     return key, salt
 
 
-def derive_room_key(shared_secret: bytes, room_name: bytes, salt: bytes | None = None) -> Tuple[bytes, bytes]:
+def derive_room_key(shared_secret: bytes | bytearray, room_name: bytes, salt: bytes | None = None) -> Tuple[bytearray, bytes]:
     if salt is None:
         salt = secrets.token_bytes(32)
     info = HKDF_INFO_ROOM + b":" + room_name
@@ -173,64 +212,62 @@ def derive_room_key(shared_secret: bytes, room_name: bytes, salt: bytes | None =
     return key, salt
 
 
-# ──────────────────────────────────────────────
+# ──────────────────────────────────────────────────
 # XChaCha20-Poly1305 Encryption
-# Note: cryptography lib uses 12-byte nonce for ChaCha20Poly1305.
-# For 24-byte XChaCha20, we simulate via nonce-extended construction.
-# ──────────────────────────────────────────────
-def _xchacha_nonce_extend(nonce24: bytes, key: bytes) -> Tuple[bytes, bytes]:
+# 24-byte nonce via HChaCha20-inspired subkey construction
+# ──────────────────────────────────────────────────
+def _xchacha_nonce_extend(nonce24: bytes, key: bytes | bytearray) -> Tuple[bytearray, bytes]:
     """
-    XChaCha20 nonce extension (HChaCha20 subkey + 12-byte nonce).
-    We derive a subkey from the first 16 bytes of the nonce via HKDF,
-    then use remaining 8 bytes as the stream nonce.
-    This is a simplified but secure construction.
+    Derive subkey from first 16 bytes of nonce via HKDF,
+    then use remaining 8 bytes as the 12-byte stream nonce.
     """
     assert len(nonce24) == 24
-    subkey = hkdf_derive(key, nonce24[:16], b"xchacha20-subkey", 32)
+    subkey = hkdf_derive(bytes(key), nonce24[:16], b"xchacha20-subkey", 32)
     stream_nonce = b"\x00\x00\x00\x00" + nonce24[16:]
     return subkey, stream_nonce
 
 
-def encrypt_message(key: bytes, plaintext: bytes, aad: bytes = b"") -> bytes:
+def encrypt_message(key: bytes | bytearray, plaintext: bytes, aad: bytes = b"") -> bytes:
     """
-    Encrypt with XChaCha20-Poly1305 construction.
+    Encrypt with XChaCha20-Poly1305.
     Returns: nonce(24) + ciphertext_with_tag
     """
     nonce24 = secrets.token_bytes(NONCE_SIZE)
     subkey, stream_nonce = _xchacha_nonce_extend(nonce24, key)
-    cipher = ChaCha20Poly1305(subkey)
-    ct = cipher.encrypt(stream_nonce, plaintext, aad if aad else None)
+    cipher = ChaCha20Poly1305(bytes(subkey))
+    ct = cipher.encrypt(stream_nonce, plaintext, aad or None)
+    wipe_bytearray(subkey)
     return nonce24 + ct
 
 
-def decrypt_message(key: bytes, ciphertext: bytes, aad: bytes = b"") -> bytes:
+def decrypt_message(key: bytes | bytearray, ciphertext: bytes, aad: bytes = b"") -> bytes:
     """
     Decrypt XChaCha20-Poly1305.
-    Expects: nonce(24) + ciphertext_with_tag
-    Raises: InvalidTag on failure.
+    Raises InvalidTag on auth failure.
     """
     if len(ciphertext) < NONCE_SIZE + 16:
         raise ValueError("Ciphertext too short")
     nonce24 = ciphertext[:NONCE_SIZE]
     ct = ciphertext[NONCE_SIZE:]
     subkey, stream_nonce = _xchacha_nonce_extend(nonce24, key)
-    cipher = ChaCha20Poly1305(subkey)
-    return cipher.decrypt(stream_nonce, ct, aad if aad else None)
+    cipher = ChaCha20Poly1305(bytes(subkey))
+    try:
+        pt = cipher.decrypt(stream_nonce, ct, aad or None)
+    finally:
+        wipe_bytearray(subkey)
+    return pt
 
 
-# ──────────────────────────────────────────────
-# Anti-Replay: Nonce + Timestamp Tracker
-# ──────────────────────────────────────────────
+# ──────────────────────────────────────────────────
+# Anti-Replay: Nonce + Timestamp
+# ──────────────────────────────────────────────────
 class AntiReplayFilter:
-    """Tracks seen nonces and validates timestamps to prevent replay attacks."""
-
     def __init__(self, max_skew: int = MAX_TIMESTAMP_SKEW):
         self._seen: set[bytes] = set()
         self._order: list[bytes] = []
         self.max_skew = max_skew
 
     def check(self, nonce: bytes, timestamp: float) -> bool:
-        """Returns True if message is fresh and not replayed."""
         now = time.time()
         if abs(now - timestamp) > self.max_skew:
             return False
@@ -244,35 +281,32 @@ class AntiReplayFilter:
         return True
 
 
-# ──────────────────────────────────────────────
-# Double Ratchet-inspired: Symmetric Ratchet
-# Provides forward secrecy within a session.
-# ──────────────────────────────────────────────
+# ──────────────────────────────────────────────────
+# Symmetric Ratchet (Double Ratchet-inspired)
+# ──────────────────────────────────────────────────
 class SymmetricRatchet:
     """
-    Simple KDF ratchet: each message advances the chain key,
-    deriving a fresh message key. Old keys are wiped after use.
+    KDF ratchet: each step derives a fresh message key and advances
+    the chain key. Old keys are wiped after use for forward secrecy.
     """
 
-    def __init__(self, root_key: bytes):
+    def __init__(self, root_key: bytes | bytearray):
         self._chain_key = bytearray(root_key)
         self._counter = 0
 
-    def _advance(self) -> bytes:
-        """Derive next message key and advance chain."""
+    def _advance(self) -> bytearray:
         ck = bytes(self._chain_key)
-        msg_key = hkdf_derive(ck, b"msg", HKDF_INFO_RATCHET + struct.pack(">Q", self._counter), 32)
-        new_ck  = hkdf_derive(ck, b"chain", HKDF_INFO_RATCHET + struct.pack(">Q", self._counter), 32)
-        secure_wipe(self._chain_key)
-        self._chain_key = bytearray(new_ck)
-        wipe_bytes(ck)
+        msg_key  = hkdf_derive(ck, b"msg",   HKDF_INFO_RATCHET + struct.pack(">Q", self._counter), 32)
+        new_ck   = hkdf_derive(ck, b"chain", HKDF_INFO_RATCHET + struct.pack(">Q", self._counter), 32)
+        wipe_bytearray(self._chain_key)
+        self._chain_key = new_ck
         self._counter += 1
         return msg_key
 
     def encrypt(self, plaintext: bytes, aad: bytes = b"") -> bytes:
         key = self._advance()
         ct = encrypt_message(key, plaintext, aad)
-        wipe_bytes(key)
+        wipe_bytearray(key)
         return ct
 
     def decrypt(self, ciphertext: bytes, aad: bytes = b"") -> bytes:
@@ -280,54 +314,41 @@ class SymmetricRatchet:
         try:
             pt = decrypt_message(key, ciphertext, aad)
         finally:
-            wipe_bytes(key)
+            wipe_bytearray(key)
         return pt
 
     def destroy(self) -> None:
-        secure_wipe(self._chain_key)
+        wipe_bytearray(self._chain_key)
 
 
-# ──────────────────────────────────────────────
-# Wire Protocol: Message Framing
-# ──────────────────────────────────────────────
-"""
-Wire format (all lengths big-endian uint32):
-  [4]  total_length  (of entire payload after this field)
-  [4]  type_id       (MessageType enum value)
-  [8]  timestamp     (float64 unix, signed)
-  [32] nonce_id      (random bytes for anti-replay)
-  [4]  payload_len
-  [N]  payload       (encrypted blob or plaintext handshake)
-  [64] signature     (Ed25519 over all preceding bytes)
-"""
-
+# ──────────────────────────────────────────────────
+# Wire Protocol
+# ──────────────────────────────────────────────────
 import json
 from enum import IntEnum
 
 
 class MessageType(IntEnum):
-    HELLO         = 1   # identity + session pub key (plaintext)
-    HELLO_ACK     = 2   # server ack with peer list
-    ROOM_JOIN     = 3   # join room request (encrypted)
-    ROOM_CHAT     = 4   # encrypted chat message
-    ROOM_PM       = 5   # private message
-    KEY_EXCHANGE  = 6   # X25519 pub key for PM E2EE
-    FILE_CHUNK    = 7   # file streaming chunk
-    PING          = 8
-    PONG          = 9
-    ERROR         = 10
-    ROOM_LIST     = 11
-    USER_LIST     = 12
-    DISCONNECT    = 13
+    HELLO        = 1
+    HELLO_ACK    = 2
+    ROOM_JOIN    = 3
+    ROOM_CHAT    = 4
+    ROOM_PM      = 5
+    KEY_EXCHANGE = 6
+    FILE_CHUNK   = 7
+    PING         = 8
+    PONG         = 9
+    ERROR        = 10
+    ROOM_LIST    = 11
+    USER_LIST    = 12
+    DISCONNECT   = 13
 
 
 def build_frame(msg_type: MessageType, payload: bytes, identity: IdentityKey) -> bytes:
-    """Build a signed wire frame."""
-    timestamp = struct.pack(">d", time.time())
-    nonce_id  = secrets.token_bytes(32)
+    timestamp  = struct.pack(">d", time.time())
+    nonce_id   = secrets.token_bytes(32)
     type_bytes = struct.pack(">I", int(msg_type))
-    pay_len   = struct.pack(">I", len(payload))
-
+    pay_len    = struct.pack(">I", len(payload))
     body = type_bytes + timestamp + nonce_id + pay_len + payload
     sig  = identity.sign(body)
     frame_data = body + sig
@@ -336,11 +357,6 @@ def build_frame(msg_type: MessageType, payload: bytes, identity: IdentityKey) ->
 
 
 def parse_frame(data: bytes) -> dict:
-    """
-    Parse wire frame. Returns dict with keys:
-    type_id, timestamp, nonce_id, payload, signature, raw_body
-    Raises ValueError on malformed frames.
-    """
     if len(data) < 4:
         raise ValueError("Frame too short")
     total = struct.unpack(">I", data[:4])[0]
@@ -373,14 +389,14 @@ def decode_json_payload(data: bytes) -> dict:
     return json.loads(data.decode())
 
 
-# ──────────────────────────────────────────────
+# ──────────────────────────────────────────────────
 # File Streaming Encryption
-# ──────────────────────────────────────────────
+# ──────────────────────────────────────────────────
 CHUNK_SIZE = 64 * 1024  # 64 KB
 
 
-def encrypt_file_stream(key: bytes, filepath: str):
-    """Generator: yields encrypted chunks (nonce+ct) for a file."""
+def encrypt_file_stream(key: bytes | bytearray, filepath: str):
+    """Generator: yields encrypted chunks (nonce+ct)."""
     with open(filepath, "rb") as f:
         while True:
             chunk = f.read(CHUNK_SIZE)
@@ -389,24 +405,22 @@ def encrypt_file_stream(key: bytes, filepath: str):
             yield encrypt_message(key, chunk)
 
 
-def decrypt_file_stream(key: bytes, chunks, output_path: str) -> None:
-    """Decrypt iterable of encrypted chunks and write to output_path."""
+def decrypt_file_stream(key: bytes | bytearray, chunks, output_path: str) -> None:
     with open(output_path, "wb") as f:
         for ct in chunks:
             f.write(decrypt_message(key, ct))
 
 
-# ──────────────────────────────────────────────
+# ──────────────────────────────────────────────────
 # Message Hash Audit Trail
-# ──────────────────────────────────────────────
+# ──────────────────────────────────────────────────
 def message_hash(ciphertext: bytes) -> str:
-    """SHA-256 of ciphertext for post-factum audit."""
     return hashlib.sha256(ciphertext).hexdigest()[:16]
 
 
-# ──────────────────────────────────────────────
-# Test Vectors (run: python utils.py)
-# ──────────────────────────────────────────────
+# ──────────────────────────────────────────────────
+# Test Vectors
+# ──────────────────────────────────────────────────
 if __name__ == "__main__":
     print("[TEST] Identity Key Generation")
     idk = IdentityKey.generate()
@@ -417,12 +431,12 @@ if __name__ == "__main__":
     bob   = SessionKey.generate()
     ss_a  = alice.exchange(bob.public_bytes())
     ss_b  = bob.exchange(alice.public_bytes())
-    assert ss_a == ss_b, "ECDH mismatch!"
+    assert bytes(ss_a) == bytes(ss_b), "ECDH mismatch!"
     print("  Shared secrets match ✓")
 
     print("[TEST] HKDF Key Derivation")
     enc_key, salt = derive_session_key(ss_a)
-    print(f"  Derived key: {enc_key.hex()[:16]}...")
+    print(f"  Derived key: {bytes(enc_key).hex()[:16]}...")
 
     print("[TEST] XChaCha20-Poly1305 Encrypt/Decrypt")
     pt  = b"Hello, secure world!"
@@ -437,10 +451,10 @@ if __name__ == "__main__":
     nonce = secrets.token_bytes(32)
     ts = time.time()
     assert arf.check(nonce, ts) == True
-    assert arf.check(nonce, ts) == False  # replay
+    assert arf.check(nonce, ts) == False
     print("  Replay blocked ✓")
 
-    print("[TEST] Symmetric Ratchet (Forward Secrecy)")
+    print("[TEST] Symmetric Ratchet")
     ratchet_send = SymmetricRatchet(enc_key)
     ratchet_recv = SymmetricRatchet(enc_key)
     for i in range(5):
@@ -451,12 +465,18 @@ if __name__ == "__main__":
     ratchet_recv.destroy()
     print("  Ratchet 5 messages OK ✓")
 
-    print("[TEST] Wire Frame Build/Parse")
+    print("[TEST] Wire Frame Build/Parse + Ed25519 sig")
     frame = build_frame(MessageType.ROOM_CHAT, b"test payload", idk)
     parsed = parse_frame(frame)
     assert parsed["payload"] == b"test payload"
     valid = verify_external(idk.public_bytes(), parsed["signature"], parsed["raw_body"])
     assert valid
     print("  Frame sign/verify OK ✓")
+
+    print("[TEST] Nick sanitization (ANSI injection)")
+    bad_nick = "Alice\x1b[31mRED\x1b[0m"
+    clean = sanitize_nick(bad_nick)
+    assert "\x1b" not in clean
+    print(f"  '{bad_nick}' -> '{clean}' ✓")
 
     print("\n[ALL TESTS PASSED] ✓")
