@@ -95,6 +95,13 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements-dev.txt
         
+    - name: Debug Python Environment (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        python --version
+        python -c "import sys; print('Python path:', sys.path)"
+        python -c "import utils; print('Utils import OK')"
+        
     - name: Run Unit Tests
       run: |
         pytest tests/test_simple.py -v --tb=short
