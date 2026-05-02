@@ -157,7 +157,9 @@ class ChatServer:
             self._hybrid_engine = None
             if pq_mode:
                 log.warning("⚠️  PQ mode requested but hybrid crypto not available")
-        self._room_keys: Dict[str, str] = {}  # room -> encrypted room_key (hex)
+        # REMOVED: Room key storage compromised E2E security
+# self._room_keys: Dict[str, str] = {}  # room -> encrypted room_key (hex)
+# Server will NOT store or distribute room keys
         self._use_tls = use_tls
         self._server_identity = IdentityKey.generate()
         log.info(f"Server fingerprint: {self._server_identity.fingerprint()}")
@@ -291,7 +293,9 @@ class ChatServer:
         elif t == MessageType.USER_LIST:
             await self._send_user_list(peer, frame)
         elif t == MessageType.ROOM_KEY:
-            await self._handle_room_key(peer, frame)
+            # REMOVED: Room key handler compromised E2E security
+            log.warning(f"Received ROOM_KEY from {peer.nick} - functionality disabled for security")
+            return
         elif t == MessageType.PING:
             pong = build_frame(MessageType.PONG, b"", self._server_identity)
             await peer.queue.put(pong)
@@ -330,19 +334,9 @@ class ChatServer:
         roster_frame = build_frame(MessageType.USER_LIST, roster, self._server_identity)
         await peer.queue.put(roster_frame)
         
-        # Send room key if it exists
-        if room in self._room_keys:
-            log.info(f"Sending room key to {peer.nick} for #{room}")
-            log.info(f"Sending key value: {self._room_keys[room]}")
-            payload = encode_json_payload({
-                "room": room,
-                "from": "server",
-                "encrypted_key": self._room_keys[room],
-            })
-            key_frame = build_frame(MessageType.ROOM_KEY, payload, self._server_identity)
-            await peer.queue.put(key_frame)
-        else:
-            log.info(f"No room key exists for #{room} - new member {peer.nick} should generate")
+        # REMOVED: Room key distribution compromised E2E security
+        # Server will NOT distribute room keys
+        log.info(f"Room #{room} joined by {peer.nick} - peer-to-peer key exchange required")
 
     async def _relay_room(self, peer: Peer, frame: dict) -> None:
         try:
@@ -406,36 +400,12 @@ class ChatServer:
         relay_frame = build_frame(MessageType.FILE_CHUNK, relay, self._server_identity)
         await self._broadcast_room(room, relay_frame, exclude=peer.nick)
 
-    async def _handle_room_key(self, peer: Peer, frame: dict) -> None:
-        """Handle room key distribution from room creator."""
-        try:
-            info = decode_json_payload(frame["payload"])
-            room = info["room"]
-            encrypted_key = info["encrypted_key"]  # hex string
-        except Exception:
-            return
-        
-        if room not in peer.rooms:
-            log.warning(f"Room key from non-member {peer.nick} for #{room}")
-            return
-        
-        if room not in self._room_keys:
-            # First time: store the room key
-            self._room_keys[room] = encrypted_key
-            log.info(f"Room key stored for #{room} by {peer.nick}")
-            log.info(f"Stored key value: {encrypted_key}")
-            
-            # Broadcast to all current members (including sender for confirmation)
-            payload = encode_json_payload({
-                "room": room,
-                "from": peer.nick,
-                "encrypted_key": encrypted_key,
-            })
-            key_frame = build_frame(MessageType.ROOM_KEY, payload, self._server_identity)
-            await self._broadcast_room(room, key_frame)
-        else:
-            # Room key already exists, ignore or update
-            log.info(f"Room key already exists for #{room}, ignoring from {peer.nick}")
+    # REMOVED: _handle_room_key method - SECURITY BREACH
+    # Server will NOT handle room key distribution
+    async def _handle_room_key_disabled(self, peer: Peer, frame: dict) -> None:
+        """DISABLED: Room key distribution compromised E2E security."""
+        log.warning(f"Room key distribution disabled for security - received from {peer.nick}")
+        return
 
     async def _handle_room_list(self, peer: Peer, frame: dict) -> None:
         """Handle room list request from client."""

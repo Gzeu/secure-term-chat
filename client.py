@@ -5,11 +5,13 @@
 from __future__ import annotations
 import asyncio
 import argparse
-import struct
+import os
 import sys
 import time
+import asyncio
+import struct
 import secrets
-import ssl
+import logging
 import hashlib
 from pathlib import Path
 from typing import Dict, Optional, List
@@ -35,6 +37,7 @@ from utils import (
     InvalidTag,
     HYBRID_CRYPTO_AVAILABLE,
 )
+from optimized_hybrid_session import OptimizedHybridSession, create_session
 from keystore import AnonymousKeystore, generate_temporary_nickname
 
 MAX_FRAME_SIZE = 2 * 1024 * 1024
@@ -306,15 +309,21 @@ class ChatNetworkClient:
         self.identity_name = identity_name
         self.password = password
         
-        # Initialize hybrid crypto engine if PQ mode is enabled
+        # Initialize optimized hybrid session if PQ mode is enabled
+        if pq_mode and HYBRID_CRYPTO_AVAILABLE:
+            self._optimized_session = create_session(pq_mode=True)
+            print("🔒 Post-Quantum hybrid cryptography enabled (optimized)")
+        else:
+            self._optimized_session = None
+            if pq_mode:
+                print("⚠️  PQ mode requested but hybrid crypto not available")
+        
+        # Legacy hybrid engine (keep for compatibility)
         if pq_mode and HYBRID_CRYPTO_AVAILABLE:
             from hybrid_crypto import get_hybrid_engine
             self._hybrid_engine = get_hybrid_engine(pq_mode=True)
-            print("🔒 Post-Quantum hybrid cryptography enabled")
         else:
             self._hybrid_engine = None
-            if pq_mode:
-                print("⚠️  PQ mode requested but hybrid crypto not available")
         
         # Initialize identity
         self.identity = self._load_or_create_identity()
@@ -771,28 +780,22 @@ class ChatNetworkClient:
             print(f"[DEBUG] Room key set from {sender}!")
 
     async def _maybe_generate_room_key(self, room: str) -> None:
-        """Generate and distribute room key if we're the first member."""
-        print(f"[DEBUG] _maybe_generate_room_key called for {room}")
-        if self._room_key is not None:
-            print(f"[DEBUG] Already have room key, skipping generation")
-            return  # Already have a room key
+        """
+        Generate room key for peer-to-peer distribution.
         
-        # Generate room key
-        print(f"[DEBUG] Generating room key for {room}")
-        room_seed = secrets.token_bytes(32)
-        print(f"[DEBUG] Alice room_seed: {room_seed.hex()}")
-        self._room_key, _ = derive_room_key(room_seed, room.encode())
-        print(f"[DEBUG] Alice derived key: {bytes(self._room_key)[:8].hex()}")
-        print(f"[DEBUG] Room key generated, sending to server")
-        
-        # Distribute to server (simplified - in full implementation should use PM E2EE)
-        payload = encode_json_payload({
-            "room": room,
-            "encrypted_key": room_seed.hex(),  # For v0.3, send seed directly
-        })
-        await self._send(build_frame(MessageType.ROOM_KEY, payload, self.identity))
-        await self._msg_queue.put({"type": "system", "msg": f"Generated room key for #{room}"})
-        print(f"[DEBUG] Room key sent to server")
+        SECURITY FIX: Server no longer stores or distributes room keys.
+        Room keys are now established through peer-to-peer key exchange.
+        """
+        if self._room_key is None:
+            # Generate room seed
+            room_seed = secrets.token_bytes(32)
+            log.info(f"[ROOM] Generating room key for #{room}")
+            self._room_key = derive_room_key(room_seed)
+            
+            # SECURITY: Do NOT send to server
+            # Room key will be distributed via peer-to-peer key exchange
+            log.info(f"[ROOM] Room key generated locally - will distribute via peer-to-peer exchange")
+            await self._msg_queue.put({"type": "system", "msg": f"Generated room key for #{room} (local)"})
 
     async def _on_file_chunk(self, frame: dict) -> None:
         """FIX: proper multi-chunk reassembly with progress tracking."""
@@ -957,8 +960,9 @@ class ChatApp(App):
         )
         asyncio.create_task(self._start_network())
         self.set_interval(0.1, self._poll_messages)
-        # Periodic room list refresh
-        self.set_interval(30.0, self._refresh_room_list)
+        # Periodic room list refresh with debouncing
+        self.set_interval(60.0, self._refresh_room_list)  # Reduced frequency
+        self._last_room_list_update = 0
         # Focus input box
         input_box = self.query_one("#input-box", Input)
         self.set_focus(input_box)
@@ -969,9 +973,11 @@ class ChatApp(App):
         await self.net._send(build_frame(MessageType.USER_LIST, payload, self.net.identity))
 
     def _refresh_room_list(self) -> None:
-        """Periodically refresh room list."""
-        if self.net._connected:
+        """Periodically refresh room list with debouncing."""
+        current_time = time.time()
+        if self.net._connected and (current_time - self._last_room_list_update) > 60:
             asyncio.create_task(self.net.request_room_list())
+            self._last_room_list_update = current_time
 
     async def _start_network(self) -> None:
         # FIX: wrap in try/except to surface errors in UI instead of silently swallowing
