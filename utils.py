@@ -23,13 +23,8 @@ from cryptography.exceptions import InvalidSignature, InvalidTag
 # PyNaCl removed - all crypto functions use cryptography library
 # This reduces dependencies from 3 to 2 packages (33% reduction)
 
-# Hybrid crypto imports (Phase 1)
-from hybrid_crypto import HYBRID_CRYPTO_AVAILABLE
-try:
-    from hybrid_crypto import HybridCryptoEngine, HybridIdentity, HybridKeyExchange
-    from double_ratchet_custom import SimpleRatchet
-except ImportError:
-    pass  # Individual components may not be available
+# Post-quantum hybrid crypto not available in production build
+HYBRID_CRYPTO_AVAILABLE = False
 
 # ──────────────────────────────────────────────────
 # Constants

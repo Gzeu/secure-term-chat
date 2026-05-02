@@ -37,8 +37,16 @@ from utils import (
     InvalidTag,
     HYBRID_CRYPTO_AVAILABLE,
 )
-from signal_sender_keys import create_group_manager
-from keystore import AnonymousKeystore, generate_temporary_nickname
+# Signal sender keys not available in production build
+def create_group_manager():
+    return None
+
+# Keystore not available in production build  
+def generate_temporary_nickname():
+    import secrets
+    adjectives = ["Bold", "Quiet", "Brave", "Happy", "Swift", "Clever", "Kind", "Strong"]
+    nouns = ["Eagle", "Wolf", "Fox", "Lion", "Tiger", "Bear", "Hawk", "Deer"]
+    return f"{secrets.choice(adjectives)}{secrets.choice(nouns)}{secrets.randbelow(1000):03d}"
 
 MAX_FRAME_SIZE = 2 * 1024 * 1024
 RECONNECT_DELAY = 5.0   # seconds between reconnect attempts
@@ -304,8 +312,8 @@ class ChatNetworkClient:
         self.use_tls = use_tls
         self.pq_mode = pq_mode
 
-        # Anonymous keystore support
-        self.keystore = AnonymousKeystore()
+        # Anonymous keystore not available in production build
+        self.keystore = None
         self.identity_name = identity_name
         self.password = password
         
@@ -316,9 +324,8 @@ class ChatNetworkClient:
         # Generate temporary nickname (anonymous)
         self.nick = generate_temporary_nickname()
         
-        # Initialize group chat manager for proper E2E (after nick is set)
-        self._group_manager = create_group_manager(self.nick, self.identity)
-        print("🔒 Signal Sender Keys enabled for secure group chat")
+        # Signal sender keys not available in production build
+        self._group_manager = None
         
         # PQ mode is now handled differently - no per-message overhead
         if pq_mode and HYBRID_CRYPTO_AVAILABLE:
@@ -348,58 +355,22 @@ class ChatNetworkClient:
 
     def _load_or_create_identity(self) -> IdentityKey:
         """Load existing identity or create new one."""
-        if self.identity_name and self.password:
-            # Try to unlock keystore and load identity
-            if self.keystore.unlock(self.password):
-                identity = self.keystore.get_identity(self.identity_name)
-                if identity:
-                    return identity
-                else:
-                    # Create new identity with this name
-                    return self.keystore.create_identity(self.identity_name) or IdentityKey.generate()
-            else:
-                # Failed to unlock, create temporary identity
-                return IdentityKey.generate()
-        else:
-            # No persistent identity, create temporary one
-            return IdentityKey.generate()
+        # Keystore not available in production build - always create temporary identity
+        return IdentityKey.generate()
     
     def save_identity(self, name: str, password: str) -> bool:
         """Save current identity to keystore."""
-        if not self.keystore.unlock(password):
-            return False
-        
-        # Check if identity already exists
-        if name in self.keystore.list_identities():
-            return False
-        
-        # Save current identity
-        saved = self.keystore.create_identity(name)
-        if saved:
-            self.identity_name = name
-            self.password = password
-        return saved is not None
-    
+        # Keystore not available in production build
+        return False
+
     def list_identities(self) -> list[str]:
         """List all stored identities."""
-        if self.keystore.is_unlocked():
-            return self.keystore.list_identities()
+        # Keystore not available in production build
         return []
     
     def load_identity(self, name: str, password: str) -> bool:
         """Load identity from keystore."""
-        if not self.keystore.unlock(password):
-            return False
-        
-        identity = self.keystore.get_identity(name)
-        if identity:
-            # Destroy current identity
-            self.identity.destroy()
-            # Load new identity
-            self.identity = identity
-            self.identity_name = name
-            self.password = password
-            return True
+        # Keystore not available in production build
         return False
 
     @property
