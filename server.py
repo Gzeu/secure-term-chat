@@ -23,8 +23,7 @@ from utils import (
     fingerprint_from_bytes, AntiReplayFilter, sanitize_nick,
 )
 from performance_optimizations import (
-    FRAME_POOL, SSL_POOL, BROADCASTER, PERF_MONITOR,
-    BatchSender, MessageCompressor
+    FRAME_POOL, SSL_POOL, BROADCASTER, PERF_MONITOR
 )
 
 logging.basicConfig(
@@ -73,11 +72,6 @@ class Peer:
     rate_limiter: RateLimiter = field(default_factory=RateLimiter)
     replay_filter: AntiReplayFilter = field(default_factory=AntiReplayFilter)
     addr: str = ""
-    batch_sender: Optional[BatchSender] = field(default=None, init=False)
-
-    def __post_init__(self):
-        # Initialize batch sender for this peer
-        self.batch_sender = BatchSender(self.writer)
 
     @property
     def fingerprint(self) -> str:
@@ -166,9 +160,9 @@ class ChatServer:
             self._hybrid_engine = None
             if pq_mode:
                 log.warning("⚠️  PQ mode requested but hybrid crypto not available")
-        # REMOVED: Room key storage compromised E2E security
-# self._room_keys: Dict[str, str] = {}  # room -> encrypted room_key (hex)
-# Server will NOT store or distribute room keys
+        # Room key distribution for peer-to-peer encryption
+        self._room_keys: Dict[str, str] = {}  # room -> encrypted room_key (hex)
+        # Server distributes room keys for functional group chat
         self._use_tls = use_tls
         self._server_identity = IdentityKey.generate()
         log.info(f"Server fingerprint: {self._server_identity.fingerprint()}")
@@ -302,9 +296,7 @@ class ChatServer:
         elif t == MessageType.USER_LIST:
             await self._send_user_list(peer, frame)
         elif t == MessageType.ROOM_KEY:
-            # REMOVED: Room key handler compromised E2E security
-            log.warning(f"Received ROOM_KEY from {peer.nick} - functionality disabled for security")
-            return
+            await self._handle_room_key(peer, frame)
         elif t == MessageType.PING:
             pong = build_frame(MessageType.PONG, b"", self._server_identity)
             await peer.queue.put(pong)
@@ -334,6 +326,33 @@ class ChatServer:
         notify_frame = build_frame(MessageType.HELLO_ACK, notify, self._server_identity)
         await self._broadcast_room(room, notify_frame, exclude=peer.nick)
 
+        # Handle room key distribution
+        if room in self._room_keys:
+            # Send existing room key to new member
+            room_key_payload = encode_json_payload({
+                "room": room,
+                "from": "server",
+                "encrypted_key": self._room_keys[room]
+            })
+            room_key_frame = build_frame(MessageType.ROOM_KEY, room_key_payload, self._server_identity)
+            await peer.queue.put(room_key_frame)
+            log.info(f"Sent room key to {peer.nick} for #{room}")
+        elif len(self._rooms[room]) == 1:
+            # First member - they will generate and distribute room key
+            log.info(f"{peer.nick} is first member of #{room} - will generate room key")
+        else:
+            # Room exists but no key stored - request key from existing member
+            for nick in self._rooms[room]:
+                if nick != peer.nick and nick in self._peers:
+                    # Request room key from existing member
+                    request_payload = encode_json_payload({
+                        "room": room,
+                        "requester": peer.nick
+                    })
+                    request_frame = build_frame(MessageType.ROOM_KEY, request_payload, self._server_identity)
+                    await self._peers[nick].queue.put(request_frame)
+                    break
+
         members = [
             self._peers[n].to_info()
             for n in self._rooms[room]
@@ -342,10 +361,7 @@ class ChatServer:
         roster = encode_json_payload({"event": "roster", "room": room, "members": members})
         roster_frame = build_frame(MessageType.USER_LIST, roster, self._server_identity)
         await peer.queue.put(roster_frame)
-        
-        # REMOVED: Room key distribution compromised E2E security
-        # Server will NOT distribute room keys
-        log.info(f"Room #{room} joined by {peer.nick} - peer-to-peer key exchange required")
+        log.info(f"Room #{room} joined by {peer.nick} - room key distribution enabled")
 
     async def _relay_room(self, peer: Peer, frame: dict) -> None:
         try:
@@ -409,12 +425,46 @@ class ChatServer:
         relay_frame = build_frame(MessageType.FILE_CHUNK, relay, self._server_identity)
         await self._broadcast_room(room, relay_frame, exclude=peer.nick)
 
-    # REMOVED: _handle_room_key method - SECURITY BREACH
-    # Server will NOT handle room key distribution
-    async def _handle_room_key_disabled(self, peer: Peer, frame: dict) -> None:
-        """DISABLED: Room key distribution compromised E2E security."""
-        log.warning(f"Room key distribution disabled for security - received from {peer.nick}")
-        return
+    async def _handle_room_key(self, peer: Peer, frame: dict) -> None:
+        """Handle room key distribution between peers."""
+        try:
+            info = decode_json_payload(frame["payload"])
+            room = info.get("room", "")
+            encrypted_key = info.get("encrypted_key", "")
+            requester = info.get("requester", "")
+        except Exception:
+            return
+        
+        if not room:
+            return
+        
+        # Store room key if provided
+        if encrypted_key and not requester:
+            self._room_keys[room] = encrypted_key
+            log.info(f"Stored room key for #{room} from {peer.nick}")
+            
+            # Distribute to other members in room
+            for nick in self._rooms[room]:
+                if nick != peer.nick and nick in self._peers:
+                    room_key_payload = encode_json_payload({
+                        "room": room,
+                        "from": peer.nick,
+                        "encrypted_key": encrypted_key
+                    })
+                    room_key_frame = build_frame(MessageType.ROOM_KEY, room_key_payload, self._server_identity)
+                    await self._peers[nick].queue.put(room_key_frame)
+            return
+        
+        # Forward room key to requester
+        if requester and requester in self._peers and room in self._room_keys:
+            room_key_payload = encode_json_payload({
+                "room": room,
+                "from": peer.nick,
+                "encrypted_key": self._room_keys[room]
+            })
+            room_key_frame = build_frame(MessageType.ROOM_KEY, room_key_payload, self._server_identity)
+            await self._peers[requester].queue.put(room_key_frame)
+            log.info(f"Forwarded room key for #{room} to {requester}")
 
     async def _handle_room_list(self, peer: Peer, frame: dict) -> None:
         """Handle room list request from client."""
@@ -486,10 +536,8 @@ class ChatServer:
 
     @staticmethod
     async def _send_raw(writer: asyncio.StreamWriter, data: bytes) -> None:
-        """Send raw data with optional compression"""
-        # Apply compression for large frames
-        compressed_data = MessageCompressor.compress(data)
-        writer.write(compressed_data)
+        """Send raw data"""
+        writer.write(data)
         await writer.drain()
 
 

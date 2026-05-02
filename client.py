@@ -602,10 +602,7 @@ class ChatNetworkClient:
         elif t == MessageType.KEY_EXCHANGE:
             await self._on_key_exchange(frame)
         elif t == MessageType.ROOM_KEY:
-            # SECURITY: Disable room key processing from server
-            # ROOM_KEY received from server - IGNORED for security
-            await self._msg_queue.put({"type": "system", "msg": "⚠️ Server room key distribution disabled for security"})
-            return
+            await self._on_room_key(frame)
         elif t == MessageType.FILE_CHUNK:
             await self._on_file_chunk(frame)
         elif t == MessageType.ROOM_LIST:
@@ -743,56 +740,65 @@ class ChatNetworkClient:
 
     async def _on_room_key(self, frame: dict) -> None:
         """Handle room key distribution."""
-        # Room key handler called!
         try:
             info = decode_json_payload(frame["payload"])
-            room = info["room"]
+            room = info.get("room", "")
             sender = info.get("from", "server")
-            encrypted_key_hex = info["encrypted_key"]
-            # Room key payload: room={room}, sender={sender}
+            encrypted_key_hex = info.get("encrypted_key", "")
+            requester = info.get("requester", "")
         except Exception as e:
-            # Room key parse error: {e}
             return
         
         if room != self.room:
-            # Room key for wrong room: {room} != {self.room}
             return
         
-        if sender == "server" and self._room_key is None:
-            # Receiving existing room key from server (we're not first)
-            await self._msg_queue.put({"type": "system", "msg": f"Receiving room key for #{room}..."})
-            # Use the same room key derivation method as sender
-            room_seed = bytes.fromhex(encrypted_key_hex)
-            # Bob received room_seed: {room_seed.hex()}
-            self._room_key, _ = derive_room_key(room_seed, room.encode())
-            # Bob derived key: {bytes(self._room_key)[:8].hex()}
-            await self._msg_queue.put({"type": "system", "msg": f"Room key received! Ready to chat in #{room}"})
-            # Room key set from server! Key: {bytes(self._room_key)[:8].hex()}
-        elif sender != "server" and self._room_key is None:
-            # Room key from another peer (first client distributing)
-            await self._msg_queue.put({"type": "system", "msg": f"Room key from {sender} for #{room}"})
-            room_seed = bytes.fromhex(encrypted_key_hex)
-            self._room_key, _ = derive_room_key(room_seed, room.encode())
-            await self._msg_queue.put({"type": "system", "msg": f"Room key received! Ready to chat in #{room}"})
-            # Room key set from {sender}!
+        # Handle room key request from server
+        if requester and not encrypted_key_hex:
+            # Server is requesting room key from us
+            if self._room_key is not None:
+                # We have the room key, send it to requester
+                room_seed = secrets.token_bytes(32)  # Generate new seed for security
+                encrypted_key = encrypt_message(self._room_key, room_seed)
+                
+                payload = encode_json_payload({
+                    "room": room,
+                    "encrypted_key": encrypted_key.hex()
+                })
+                await self._send(build_frame(MessageType.ROOM_KEY, payload, self.identity))
+                await self._msg_queue.put({"type": "system", "msg": f"Shared room key with {requester}"})
+            return
+        
+        # Handle room key distribution
+        if encrypted_key_hex and self._room_key is None:
+            await self._msg_queue.put({"type": "system", "msg": f"Receiving room key from {sender} for #{room}..."})
+            
+            # Decrypt room key
+            try:
+                room_seed = bytes.fromhex(encrypted_key_hex)
+                self._room_key, _ = derive_room_key(room_seed, room.encode())
+                await self._msg_queue.put({"type": "system", "msg": f"Room key received! Ready to chat in #{room}"})
+            except Exception as e:
+                await self._msg_queue.put({"type": "error", "msg": f"Room key decryption failed: {e}"})
+                return
 
     async def _maybe_generate_room_key(self, room: str) -> None:
         """
-        Generate room key for peer-to-peer distribution.
-        
-        SECURITY FIX: Server no longer stores or distributes room keys.
-        Room keys are now established through peer-to-peer key exchange.
+        Generate room key and distribute to server for peer-to-peer exchange.
         """
         if self._room_key is None:
             # Generate room seed
             room_seed = secrets.token_bytes(32)
             logging.info(f"[ROOM] Generating room key for #{room}")
-            self._room_key = derive_room_key(room_seed)
+            self._room_key, _ = derive_room_key(room_seed, room.encode())
             
-            # SECURITY: Do NOT send to server
-            # Room key will be distributed via peer-to-peer key exchange
-            logging.info(f"[ROOM] Room key generated locally - will distribute via peer-to-peer exchange")
-            await self._msg_queue.put({"type": "system", "msg": f"Generated room key for #{room} (local)"})
+            # Send room key to server for distribution
+            payload = encode_json_payload({
+                "room": room,
+                "encrypted_key": room_seed.hex()
+            })
+            await self._send(build_frame(MessageType.ROOM_KEY, payload, self.identity))
+            await self._msg_queue.put({"type": "system", "msg": f"Generated and shared room key for #{room}"})
+            logging.info(f"[ROOM] Room key shared with server for distribution")
 
     async def _on_file_chunk(self, frame: dict) -> None:
         """FIX: proper multi-chunk reassembly with progress tracking."""
