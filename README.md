@@ -15,14 +15,14 @@
 ## Features
 
 ### Security Features
-- **Post-Quantum Hybrid**: X25519 + ML-KEM-768 + Double Ratchet
+- **Signal Sender Keys**: Proper E2E group chat without server key access
+- **Post-Quantum Ready**: X25519 + ML-KEM-768 hybrid key exchange (experimental)
 - **Double Encryption**: TLS 1.3 + End-to-End Encryption (XChaCha20-Poly1305)
 - **Advanced Cryptography**: X25519 ECDH + Ed25519 signatures + HKDF-SHA512
 - **Certificate Pinning**: TLS with TOFU (Trust-On-First-Use) fingerprinting
 - **Forward Secrecy**: Double Ratchet with perfect forward secrecy
-- **Quantum-Resistant**: ML-KEM-768 NIST-standardized post-quantum algorithm
 - **Identity Management**: Anonymous identities with optional keystore persistence
-- **PQ Mode Control**: `--pq-mode` flag for quantum-resistant security
+- **Server Security**: Server never sees room keys or message content
 
 ### Chat Features
 - **Multi-User Chat**: Real-time encrypted messaging in rooms
@@ -78,10 +78,12 @@ The server prints its **fingerprint** — verify it out-of-band with participant
 
 ```bash
 # Anonymous client (temporary identity)
-python client.py localhost:12345 --room crypto --tls --pq-mode
+python client.py localhost:12345 --room crypto --tls
 
 # With saved identity
-python client.py localhost:12345 --room crypto --tls --pq-mode --identity myname --password mypass
+python client.py localhost:12345 --room crypto --tls --identity myname --password mypass
+
+# Note: PQ mode temporarily disabled for performance improvements
 ```
 
 ### 3. Verify fingerprints

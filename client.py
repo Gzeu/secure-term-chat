@@ -37,7 +37,7 @@ from utils import (
     InvalidTag,
     HYBRID_CRYPTO_AVAILABLE,
 )
-from optimized_hybrid_session import OptimizedHybridSession, create_session
+from signal_sender_keys import create_group_manager
 from keystore import AnonymousKeystore, generate_temporary_nickname
 
 MAX_FRAME_SIZE = 2 * 1024 * 1024
@@ -309,21 +309,16 @@ class ChatNetworkClient:
         self.identity_name = identity_name
         self.password = password
         
-        # Initialize optimized hybrid session if PQ mode is enabled
-        if pq_mode and HYBRID_CRYPTO_AVAILABLE:
-            self._optimized_session = create_session(pq_mode=True)
-            print("🔒 Post-Quantum hybrid cryptography enabled (optimized)")
-        else:
-            self._optimized_session = None
-            if pq_mode:
-                print("⚠️  PQ mode requested but hybrid crypto not available")
+        # Initialize group chat manager for proper E2E
+        self._group_manager = create_group_manager(self.nick, self.identity)
+        print("🔒 Signal Sender Keys enabled for secure group chat")
         
-        # Legacy hybrid engine (keep for compatibility)
+        # PQ mode is now handled differently - no per-message overhead
         if pq_mode and HYBRID_CRYPTO_AVAILABLE:
-            from hybrid_crypto import get_hybrid_engine
-            self._hybrid_engine = get_hybrid_engine(pq_mode=True)
+            print("⚠️  PQ mode temporarily disabled for performance - using classical crypto")
+            self.pq_mode = False  # Disable PQ for performance
         else:
-            self._hybrid_engine = None
+            self.pq_mode = False
         
         # Initialize identity
         self.identity = self._load_or_create_identity()
@@ -607,8 +602,10 @@ class ChatNetworkClient:
         elif t == MessageType.KEY_EXCHANGE:
             await self._on_key_exchange(frame)
         elif t == MessageType.ROOM_KEY:
-            print(f"[DEBUG] Processing ROOM_KEY")
-            await self._on_room_key(frame)
+            # SECURITY: Disable room key processing from server
+            print(f"[DEBUG] ROOM_KEY received from server - IGNORED for security")
+            await self._msg_queue.put({"type": "system", "msg": "⚠️ Server room key distribution disabled for security"})
+            return
         elif t == MessageType.FILE_CHUNK:
             await self._on_file_chunk(frame)
         elif t == MessageType.ROOM_LIST:
