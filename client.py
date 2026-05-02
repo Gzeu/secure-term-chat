@@ -7,8 +7,8 @@ import asyncio
 import argparse
 import os
 import sys
+import ssl
 import time
-import asyncio
 import struct
 import secrets
 import logging
@@ -789,12 +789,12 @@ class ChatNetworkClient:
         if self._room_key is None:
             # Generate room seed
             room_seed = secrets.token_bytes(32)
-            log.info(f"[ROOM] Generating room key for #{room}")
+            logging.info(f"[ROOM] Generating room key for #{room}")
             self._room_key = derive_room_key(room_seed)
             
             # SECURITY: Do NOT send to server
             # Room key will be distributed via peer-to-peer key exchange
-            log.info(f"[ROOM] Room key generated locally - will distribute via peer-to-peer exchange")
+            logging.info(f"[ROOM] Room key generated locally - will distribute via peer-to-peer exchange")
             await self._msg_queue.put({"type": "system", "msg": f"Generated room key for #{room} (local)"})
 
     async def _on_file_chunk(self, frame: dict) -> None:
