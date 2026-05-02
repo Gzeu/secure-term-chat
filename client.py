@@ -14,10 +14,8 @@ import secrets
 import logging
 import hashlib
 from pathlib import Path
-from typing import Dict, Optional, List, Tuple
+from typing import Dict, Optional, List
 from collections import deque
-from dataclasses import dataclass
-from enum import Enum
 
 from rich.text import Text
 from textual.app import App, ComposeResult
@@ -50,141 +48,56 @@ def generate_temporary_nickname():
     nouns = ["Eagle", "Wolf", "Fox", "Lion", "Tiger", "Bear", "Hawk", "Deer"]
     return f"{secrets.choice(adjectives)}{secrets.choice(nouns)}{secrets.randbelow(1000):03d}"
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [CLIENT] %(levelname)s %(message)s",
-    datefmt="%H:%M:%S",
-)
-log = logging.getLogger("client")
-
 MAX_FRAME_SIZE = 2 * 1024 * 1024
 RECONNECT_DELAY = 5.0   # seconds between reconnect attempts
 RECONNECT_MAX   = 5     # max attempts
-PING_INTERVAL = 30.0    # seconds between keepalive pings
-
-# Client states
-class ConnectionState(Enum):
-    DISCONNECTED = "disconnected"
-    CONNECTING = "connecting"
-    CONNECTED = "connected"
-    AUTHENTICATED = "authenticated"
-    ERROR = "error"
-
-@dataclass
-class ClientConfig:
-    host: str
-    port: int
-    room: str
-    use_tls: bool = True
-    pq_mode: bool = False
-    identity_name: Optional[str] = None
-    password: Optional[str] = None
-    debug: bool = False
 
 # TLS Configuration
 TLS_CERT_FILE = Path.home() / ".secure-term-chat" / "server_cert.pem"
 TLS_FINGERPRINT_FILE = Path.home() / ".secure-term-chat" / "server_fingerprint.txt"
-CLIENT_CONFIG_DIR = Path.home() / ".secure-term-chat"
 
 
 # ──────────────────────────────────────────────────
 # TLS Certificate Fingerprinting (TOFU)
 # ──────────────────────────────────────────────────
 class TLSCertStore:
-    """Trust-On-First-Use certificate fingerprinting with enhanced security."""
+    """Trust-On-First-Use certificate fingerprinting."""
     
     def __init__(self):
-        self._stored_fp: Optional[str] = None
         self._ensure_dir()
         self._load_fingerprint()
     
-    def _ensure_dir(self) -> None:
-        """Ensure config directory exists with proper permissions."""
-        try:
-            CLIENT_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-            # Set restrictive permissions (owner only)
-            CLIENT_CONFIG_DIR.chmod(0o700)
-            log.debug(f"Config directory ensured: {CLIENT_CONFIG_DIR}")
-        except Exception as e:
-            log.error(f"Failed to create config directory: {e}")
-            raise
+    def _ensure_dir(self):
+        TLS_CERT_FILE.parent.mkdir(parents=True, exist_ok=True)
     
-    def _load_fingerprint(self) -> None:
-        """Load stored fingerprint with validation."""
-        try:
-            if TLS_FINGERPRINT_FILE.exists():
-                content = TLS_FINGERPRINT_FILE.read_text().strip()
-                # Validate fingerprint format (64 hex chars for SHA-256)
-                if len(content) == 64 and all(c in '0123456789abcdefABCDEF' for c in content):
-                    self._stored_fp = content.lower()
-                    log.debug(f"Loaded server fingerprint: {self._stored_fp[:16]}...")
-                else:
-                    log.warning("Invalid fingerprint format, ignoring")
-                    self._stored_fp = None
-            else:
-                log.debug("No stored fingerprint found")
-                self._stored_fp = None
-        except Exception as e:
-            log.error(f"Failed to load fingerprint: {e}")
+    def _load_fingerprint(self):
+        if TLS_FINGERPRINT_FILE.exists():
+            self._stored_fp = TLS_FINGERPRINT_FILE.read_text().strip()
+        else:
             self._stored_fp = None
     
-    def _save_fingerprint(self, fp: str) -> None:
-        """Save fingerprint with atomic write and secure permissions."""
-        try:
-            # Validate fingerprint before saving
-            if len(fp) != 64 or not all(c in '0123456789abcdefABCDEF' for c in fp):
-                raise ValueError("Invalid fingerprint format")
-            
-            # Atomic write using temporary file
-            temp_file = TLS_FINGERPRINT_FILE.with_suffix('.tmp')
-            temp_file.write_text(fp.lower() + "\n")
-            temp_file.chmod(0o600)  # Owner read/write only
-            temp_file.replace(TLS_FINGERPRINT_FILE)
-            
-            self._stored_fp = fp.lower()
-            log.info(f"Saved new server fingerprint: {fp[:16]}...")
-        except Exception as e:
-            log.error(f"Failed to save fingerprint: {e}")
-            raise
+    def _save_fingerprint(self, fp: str):
+        TLS_FINGERPRINT_FILE.write_text(fp + "\n")
+        self._stored_fp = fp
     
     def get_fingerprint(self, cert_der: bytes) -> str:
         """Calculate SHA-256 fingerprint of certificate DER."""
-        try:
-            if not cert_der:
-                raise ValueError("Empty certificate data")
-            return hashlib.sha256(cert_der).hexdigest()
-        except Exception as e:
-            log.error(f"Failed to calculate fingerprint: {e}")
-            raise
+        return hashlib.sha256(cert_der).hexdigest()
     
-    def verify_or_trust(self, cert_der: bytes) -> Tuple[bool, bool]:
+    def verify_or_trust(self, cert_der: bytes) -> tuple[bool, bool]:
         """
         Verify certificate fingerprint or trust on first use.
         Returns (is_trusted, is_new_trust)
         """
-        try:
-            fp = self.get_fingerprint(cert_der)
-            
-            if self._stored_fp is None:
-                # First time seeing this cert - trust it
-                log.info("First connection - trusting certificate")
-                self._save_fingerprint(fp)
-                return True, True
-            
-            # Verify against stored fingerprint
-            is_trusted = fp == self._stored_fp
-            if is_trusted:
-                log.debug("Certificate fingerprint verified")
-            else:
-                log.warning("Certificate fingerprint mismatch!")
-                log.warning(f"Expected: {self._stored_fp[:16]}...")
-                log.warning(f"Received: {fp[:16]}...")
-            
-            return is_trusted, False
-        except Exception as e:
-            log.error(f"Certificate verification failed: {e}")
-            return False, False
+        fp = self.get_fingerprint(cert_der)
+        
+        if self._stored_fp is None:
+            # First time seeing this cert - trust it
+            self._save_fingerprint(fp)
+            return True, True
+        
+        # Verify against stored fingerprint
+        return fp == self._stored_fp, False
 
 
 # ──────────────────────────────────────────────────
@@ -252,7 +165,7 @@ class PeerSession:
         self.nick         = nick
         self.identity_pub = bytes.fromhex(identity_pub_hex)
         self.session_pub  = bytes.fromhex(session_pub_hex)
-        self._fingerprint = fingerprint_from_bytes(self.identity_pub)
+        self.fingerprint  = fingerprint_from_bytes(self.identity_pub)
         self._enc_key: Optional[bytearray] = None
         self._ratchet_send: Optional[SymmetricRatchet] = None
         self._ratchet_recv: Optional[SymmetricRatchet] = None
@@ -292,19 +205,13 @@ class PeerSession:
             raise RuntimeError("Keys not derived")
         return self._ratchet_recv.decrypt(bytes.fromhex(ct_hex))
 
-    def destroy(self) -> None:
-        """Destroy session keys and wipe sensitive data."""
+    def destroy(self):
         if self._enc_key:
             wipe_bytearray(self._enc_key)
         if self._ratchet_send:
             self._ratchet_send.destroy()
         if self._ratchet_recv:
             self._ratchet_recv.destroy()
-
-    @property
-    def fingerprint(self) -> str:
-        """Get peer fingerprint."""
-        return self._fingerprint
 
 
 # ──────────────────────────────────────────────────
@@ -397,164 +304,54 @@ class FileReassembler:
 # Network Client
 # ──────────────────────────────────────────────────
 class ChatNetworkClient:
-    """Enhanced network client with robust error handling and reconnection."""
-    
-    def __init__(self, config: ClientConfig):
-        self.config = config
-        self.host = config.host
-        self.port = config.port
-        self.room = config.room
-        self.use_tls = config.use_tls
-        self.pq_mode = config.pq_mode
+    def __init__(self, host: str, port: int, room: str, use_tls: bool = False, pq_mode: bool = False,
+                 identity_name: Optional[str] = None, password: Optional[str] = None):
+        self.host = host
+        self.port = port
+        self.room = room
+        self.use_tls = use_tls
+        self.pq_mode = pq_mode
+
+        # Anonymous keystore not available in production build
+        self.keystore = None
+        self.identity_name = identity_name
+        self.password = password
         
-        # Connection state
-        self._state = ConnectionState.DISCONNECTED
+        # Initialize identity
+        self.identity = self._load_or_create_identity()
+        self.session  = SessionKey.generate()
+        
+        # Generate temporary nickname (anonymous)
+        self.nick = generate_temporary_nickname()
+        
+        # Signal sender keys not available in production build
+        self._group_manager = None
+        
+        # PQ mode is now handled differently - no per-message overhead
+        if pq_mode and HYBRID_CRYPTO_AVAILABLE:
+            print("⚠️  PQ mode temporarily disabled for performance - using classical crypto")
+            self.pq_mode = False  # Disable PQ for performance
+        else:
+            self.pq_mode = False
+        
+        self.tofu     = TOFUStore()
+        self.tls_store = TLSCertStore()  # TLS certificate fingerprinting
+        self.peers: Dict[str, PeerSession] = {}
+        self.replay   = AntiReplayFilter()
+        self.files    = FileReassembler()  # FIX: file reassembly
+        self.file_transfers: Dict[str, FileTransferProgress] = {}  # filename -> progress tracker
+        self.available_rooms: Dict[str, Dict] = {}  # room_name -> {member_count, members}
+        self.current_room = room
+
+        self._room_key: Optional[bytearray] = None
+
         self._reader: Optional[asyncio.StreamReader] = None
         self._writer: Optional[asyncio.StreamWriter] = None
-        self._connected = False
-        self._reconnect_attempts = 0
-        self._last_ping = 0.0
-        
-        # Security components
-        self.tls_store = TLSCertStore()
-        self.tofu_store = TOFUStore()
-        self.identity = self._load_or_create_identity()
-        self.session = SessionKey.generate()
-        # fingerprint is now a property, no need to store it separately
-        
-        # Room and peer management
-        self._room_key: Optional[bytearray] = None
-        self._room_salt: Optional[bytes] = None
-        self.peers: Dict[str, PeerSession] = {}
-        self._server_fp: Optional[str] = None
-        
-        # Message handling
+        self._connected   = False
         self._msg_queue: asyncio.Queue = asyncio.Queue()
-        self._offline_queue: List[Tuple[str, str]] = []
-        self._replay_filter = AntiReplayFilter()
-        
-        # File transfer
-        self._file_reassembler = FileReassembler()
-        self._current_transfer: Optional[FileTransferProgress] = None
-        
-        # Background tasks
-        self._network_task: Optional[asyncio.Task] = None
-        self._ping_task: Optional[asyncio.Task] = None
-        
-        # Nick management
-        self.nick = self._get_nick()
-        
-        log.info(f"Initialized client: {self.nick} -> {self.host}:{self.port}")
-    
-    def _get_nick(self) -> str:
-        """Get nickname from config or generate temporary one."""
-        if self.config.identity_name:
-            return self.config.identity_name
-        return generate_temporary_nickname()
-    
-    def _load_or_create_identity(self) -> IdentityKey:
-        """Load existing identity or create new one."""
-        # In production, this would load from encrypted keystore
-        # For now, generate new identity each time
-        identity = IdentityKey.generate()
-        log.debug(f"Generated new identity: {identity.fingerprint()}")
-        return identity
-    
-    @property
-    def state(self) -> ConnectionState:
-        """Get current connection state."""
-        return self._state
-    
-    def set_state(self, new_state: ConnectionState) -> None:
-        """Set connection state with logging."""
-        old_state = self._state
-        self._state = new_state
-        if old_state != new_state:
-            log.info(f"State changed: {old_state.value} -> {new_state.value}")
-    
-    async def start(self) -> None:
-        """Start the network client."""
-        try:
-            self.set_state(ConnectionState.CONNECTING)
-            
-            # Start background network task
-            self._network_task = asyncio.create_task(self._network_loop())
-            
-            # Start ping task
-            self._ping_task = asyncio.create_task(self._ping_loop())
-            
-            log.info("Network client started")
-        except Exception as e:
-            log.error(f"Failed to start client: {e}")
-            self.set_state(ConnectionState.ERROR)
-            raise
-    
-    async def stop(self) -> None:
-        """Stop the network client gracefully."""
-        try:
-            self.set_state(ConnectionState.DISCONNECTED)
-            
-            # Cancel background tasks
-            if self._network_task and not self._network_task.done():
-                self._network_task.cancel()
-                try:
-                    await self._network_task
-                except asyncio.CancelledError:
-                    pass
-            
-            if self._ping_task and not self._ping_task.done():
-                self._ping_task.cancel()
-                try:
-                    await self._ping_task
-                except asyncio.CancelledError:
-                    pass
-            
-            # Close connection
-            await self._disconnect()
-            
-            log.info("Network client stopped")
-        except Exception as e:
-            log.error(f"Error during shutdown: {e}")
-    
-    async def _disconnect(self) -> None:
-        """Close network connection."""
-        try:
-            if self._writer:
-                # Send disconnect message if connected
-                if self._connected:
-                    try:
-                        disconnect_frame = build_frame(MessageType.DISCONNECT, b"", self.identity)
-                        await self._send_raw(disconnect_frame)
-                    except Exception:
-                        pass  # Best effort
-                
-                self._writer.close()
-                await self._writer.wait_closed()
-                self._writer = None
-            
-            self._reader = None
-            self._connected = False
-            
-        except Exception as e:
-            log.error(f"Error during disconnect: {e}")
-    
-    async def _ping_loop(self) -> None:
-        """Send periodic ping messages."""
-        while self._state != ConnectionState.DISCONNECTED:
-            try:
-                await asyncio.sleep(PING_INTERVAL)
-                
-                if self._connected and time.time() - self._last_ping > PING_INTERVAL:
-                    ping_frame = build_frame(MessageType.PING, b"", self.identity)
-                    await self._send_raw(ping_frame)
-                    self._last_ping = time.time()
-                    log.debug("Sent ping")
-                    
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                log.error(f"Ping loop error: {e}")
-                await asyncio.sleep(5)  # Back off on error
+        self._server_fp: Optional[str] = None
+        self._offline_queue: deque = deque(maxlen=256)
+        self._reconnect_attempts = 0
 
     def _load_or_create_identity(self) -> IdentityKey:
         """Load existing identity or create new one."""
@@ -565,198 +362,6 @@ class ChatNetworkClient:
         """Save current identity to keystore."""
         # Keystore not available in production build
         return False
-    
-    async def _network_loop(self) -> None:
-        """Main network loop with reconnection logic."""
-        while self._state != ConnectionState.DISCONNECTED:
-            try:
-                if not self._connected:
-                    success = await self._connect()
-                    if not success:
-                        await self._handle_connection_failure()
-                        continue
-                
-                # Process messages
-                await self._read_messages()
-                
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                log.error(f"Network loop error: {e}")
-                await self._handle_connection_failure()
-    
-    async def _connect(self) -> bool:
-        """Establish connection to server."""
-        try:
-            if self.use_tls:
-                # Create SSL context for TLS connection
-                ssl_context = ssl.create_default_context()
-                ssl_context.check_hostname = False  # We use fingerprinting instead
-                ssl_context.verify_mode = ssl.CERT_NONE  # We'll verify manually
-                
-                self._reader, self._writer = await asyncio.open_connection(
-                    self.host, self.port, ssl=ssl_context, limit=MAX_FRAME_SIZE + 8,
-                )
-                
-                # Verify certificate fingerprint
-                ssl_object = self._writer.get_extra_info('ssl_object')
-                if ssl_object:
-                    cert_der = ssl_object.getpeercert(binary_form=True)
-                    is_trusted, is_new = self.tls_store.verify_or_trust(cert_der)
-                    
-                    if not is_trusted:
-                        await self._msg_queue.put({
-                            "type": "error", 
-                            "msg": "TLS Certificate fingerprint mismatch! Connection aborted."
-                        })
-                        return False
-                    
-                    if is_new:
-                        fp = self.tls_store.get_fingerprint(cert_der)
-                        await self._msg_queue.put({
-                            "type": "system", 
-                            "msg": f"🔒 TLS Connected (TOFU): {fp[:16]}..."
-                        })
-                    else:
-                        await self._msg_queue.put({
-                            "type": "system", 
-                            "msg": "🔒 TLS Connected (verified)"
-                        })
-                else:
-                    await self._msg_queue.put({
-                        "type": "error", 
-                        "msg": "TLS handshake failed - no certificate available"
-                    })
-                    return False
-            else:
-                # Plain text connection (for testing/local use)
-                self._reader, self._writer = await asyncio.open_connection(
-                    self.host, self.port, limit=MAX_FRAME_SIZE + 8,
-                )
-                await self._msg_queue.put({
-                    "type": "system", 
-                    "msg": "⚠️  Connected without TLS (insecure)"
-                })
-            
-            self._connected = True
-            self._reconnect_attempts = 0
-            
-            # Send HELLO
-            hello = encode_json_payload({
-                "nick":         self.nick,
-                "identity_pub": self.identity.public_bytes().hex(),
-                "session_pub":  self.session.public_bytes().hex(),
-            })
-            await self._send(build_frame(MessageType.HELLO, hello, self.identity))
-            
-            # Wait for HELLO_ACK
-            raw = await asyncio.wait_for(self._read_frame(), timeout=15.0)
-            f = parse_frame(raw)
-            if f["type_id"] == MessageType.HELLO_ACK:
-                info = decode_json_payload(f["payload"])
-                self._server_fp = info.get("server_fp", "?")
-                self.nick = info.get("your_nick", self.nick)
-                await self._msg_queue.put({"type": "system", "msg": f"Connected! Server FP: {self._server_fp}"})
-                await self._msg_queue.put({"type": "system", "msg": f"Your nick: {self.nick} | FP: {self.fingerprint}"})
-                self.set_state(ConnectionState.AUTHENTICATED)
-            else:
-                await self._msg_queue.put({"type": "error", "msg": "Invalid handshake response"})
-                return False
-            
-            await self.join_room(self.room)
-            return True
-            
-        except Exception as e:
-            log.error(f"Connection failed: {e}")
-            await self._msg_queue.put({"type": "error", "msg": f"Connection failed: {e}"})
-            return False
-    
-    async def _handle_connection_failure(self) -> None:
-        """Handle connection failure with reconnection logic."""
-        self._connected = False
-        self._reconnect_attempts += 1
-        
-        if self._reconnect_attempts <= RECONNECT_MAX:
-            await self._msg_queue.put({
-                "type": "system", 
-                "msg": f"Connection lost, reconnecting in {RECONNECT_DELAY}s... (attempt {self._reconnect_attempts}/{RECONNECT_MAX})"
-            })
-            await asyncio.sleep(RECONNECT_DELAY)
-        else:
-            await self._msg_queue.put({
-                "type": "error", 
-                "msg": f"Connection failed after {RECONNECT_MAX} attempts"
-            })
-            self.set_state(ConnectionState.ERROR)
-    
-    async def _read_messages(self) -> None:
-        """Read and process messages from server."""
-        while self._connected:
-            try:
-                raw = await asyncio.wait_for(self._read_frame(), timeout=60.0)
-                await self._handle_message(raw)
-            except asyncio.TimeoutError:
-                # Check if we should send a ping
-                if time.time() - self._last_ping > PING_INTERVAL / 2:
-                    ping_frame = build_frame(MessageType.PING, b"", self.identity)
-                    await self._send_raw(ping_frame)
-                    self._last_ping = time.time()
-            except Exception as e:
-                log.error(f"Message read error: {e}")
-                break
-    
-    async def _handle_message(self, raw: bytes) -> None:
-        """Handle incoming message from server."""
-        try:
-            frame = parse_frame(raw)
-            msg_type = frame["type_id"]
-            
-            # Skip ping/pong for replay filter
-            if msg_type not in (MessageType.PING, MessageType.PONG):
-                if not self._replay_filter.check(frame["nonce_id"], frame["timestamp"]):
-                    log.warning(f"Replay attack detected: {frame['nonce_id']}")
-                    return
-            
-            if not verify_external(self._server_fp.encode() if self._server_fp else b"", frame["signature"], frame["raw_body"]):
-                log.warning("Invalid message signature")
-                return
-            
-            await self._dispatch_message(frame)
-            
-        except Exception as e:
-            log.error(f"Message handling error: {e}")
-    
-    async def _dispatch_message(self, frame: dict) -> None:
-        """Dispatch message based on type."""
-        msg_type = frame["type_id"]
-        
-        if msg_type == MessageType.ROOM_CHAT:
-            await self._handle_room_chat(frame)
-        elif msg_type == MessageType.ROOM_PM:
-            await self._handle_room_pm(frame)
-        elif msg_type == MessageType.ROOM_JOIN:
-            await self._handle_room_join(frame)
-        elif msg_type == MessageType.USER_LIST:
-            await self._handle_user_list(frame)
-        elif msg_type == MessageType.ROOM_KEY:
-            await self._handle_room_key(frame)
-        elif msg_type == MessageType.KEY_EXCHANGE:
-            await self._handle_key_exchange(frame)
-        elif msg_type == MessageType.FILE_CHUNK:
-            await self._handle_file_chunk(frame)
-        elif msg_type == MessageType.PONG:
-            log.debug("Received pong")
-        elif msg_type == MessageType.ERROR:
-            await self._handle_error(frame)
-        else:
-            log.warning(f"Unknown message type: {msg_type}")
-    
-    async def _send(self, frame: bytes) -> None:
-        """Send frame to server."""
-        if self._connected and self._writer:
-            await self._send_raw(frame)
-        else:
-            log.warning("Not connected, message dropped")
 
     def list_identities(self) -> list[str]:
         """List all stored identities."""
@@ -767,177 +372,10 @@ class ChatNetworkClient:
         """Load identity from keystore."""
         # Keystore not available in production build
         return False
-    
+
     @property
     def fingerprint(self) -> str:
-        """Get client fingerprint."""
         return self.identity.fingerprint()
-    
-    async def _read_frame(self) -> bytes:
-        """Read a frame from the server."""
-        if not self._reader:
-            raise ConnectionError("Not connected")
-        
-        len_bytes = await self._reader.readexactly(4)
-        total = struct.unpack(">I", len_bytes)[0]
-        
-        if total > MAX_FRAME_SIZE:
-            raise ValueError(f"Frame too large: {total}")
-        
-        body = await self._reader.readexactly(total)
-        return len_bytes + body
-    
-    async def _send_raw(self, data: bytes) -> None:
-        """Send raw data to server."""
-        if not self._writer:
-            raise ConnectionError("Not connected")
-        
-        self._writer.write(data)
-        await self._writer.drain()
-    
-    # Message handling methods
-    async def _handle_room_chat(self, frame: dict) -> None:
-        """Handle room chat message."""
-        try:
-            info = decode_json_payload(frame["payload"])
-            ct = bytes.fromhex(info.get("ct", ""))
-            
-            if self._room_key:
-                plaintext = decrypt_message(self._room_key, ct)
-                await self._msg_queue.put({
-                    "type": "chat",
-                    "from": info.get("from", "?"),
-                    "msg": plaintext.decode(),
-                    "room": info.get("room", "")
-                })
-        except Exception as e:
-            log.error(f"Room chat error: {e}")
-    
-    async def _handle_room_pm(self, frame: dict) -> None:
-        """Handle private message."""
-        try:
-            info = decode_json_payload(frame["payload"])
-            sender = info.get("from", "")
-            ct_hex = info.get("ct", "")
-            
-            if sender in self.peers:
-                plaintext = self.peers[sender].decrypt_pm(ct_hex)
-                await self._msg_queue.put({
-                    "type": "pm",
-                    "from": sender,
-                    "msg": plaintext.decode()
-                })
-        except Exception as e:
-            log.error(f"PM error: {e}")
-    
-    async def _handle_room_join(self, frame: dict) -> None:
-        """Handle room join notification."""
-        try:
-            info = decode_json_payload(frame["payload"])
-            await self._msg_queue.put({
-                "type": "system",
-                "msg": f"{info.get('nick', '?')} joined #{info.get('room', '')}"
-            })
-        except Exception as e:
-            log.error(f"Room join error: {e}")
-    
-    async def _handle_user_list(self, frame: dict) -> None:
-        """Handle user list."""
-        try:
-            info = decode_json_payload(frame["payload"])
-            members = info.get("members", [])
-            users_text = ", ".join(m["nick"] for m in members)
-            await self._msg_queue.put({
-                "type": "system",
-                "msg": f"Users in #{info.get('room', '')}: {users_text}"
-            })
-        except Exception as e:
-            log.error(f"User list error: {e}")
-    
-    async def _handle_room_key(self, frame: dict) -> None:
-        """Handle room key distribution."""
-        try:
-            info = decode_json_payload(frame["payload"])
-            encrypted_key = info.get("encrypted_key", "")
-            
-            if encrypted_key and self._room_key:
-                # Decrypt room key (implementation depends on your crypto)
-                await self._msg_queue.put({
-                    "type": "system",
-                    "msg": "Room key updated"
-                })
-        except Exception as e:
-            log.error(f"Room key error: {e}")
-    
-    async def _handle_key_exchange(self, frame: dict) -> None:
-        """Handle key exchange for PM."""
-        try:
-            info = decode_json_payload(frame["payload"])
-            # Handle PM key exchange
-            pass
-        except Exception as e:
-            log.error(f"Key exchange error: {e}")
-    
-    async def _handle_file_chunk(self, frame: dict) -> None:
-        """Handle file chunk."""
-        try:
-            info = decode_json_payload(frame["payload"])
-            # Handle file transfer
-            pass
-        except Exception as e:
-            log.error(f"File chunk error: {e}")
-    
-    async def _handle_error(self, frame: dict) -> None:
-        """Handle error message."""
-        try:
-            info = decode_json_payload(frame["payload"])
-            await self._msg_queue.put({
-                "type": "error",
-                "msg": info.get("error", "Unknown error")
-            })
-        except Exception as e:
-            log.error(f"Error handling error: {e}")
-    
-    # Public API methods
-    async def join_room(self, room: str) -> None:
-        """Join a room."""
-        self.room = room
-        payload = encode_json_payload({"room": room})
-        await self._send(build_frame(MessageType.ROOM_JOIN, payload, self.identity))
-        await self._msg_queue.put({"type": "system", "msg": f"Joining #{room}..."})
-    
-    async def send_room_message(self, text: str) -> None:
-        """Send a room message."""
-        if not self._connected or self._room_key is None:
-            self._offline_queue.append(("room", text))
-            return
-        
-        ct = encrypt_message(self._room_key, text.encode())
-        payload = encode_json_payload({
-            "room": self.room,
-            "ct": ct.hex(),
-            "audit": message_hash(ct),
-        })
-        await self._send(build_frame(MessageType.ROOM_CHAT, payload, self.identity))
-    
-    async def send_pm(self, target: str, text: str) -> None:
-        """Send a private message."""
-        if target not in self.peers:
-            await self._msg_queue.put({"type": "error", "msg": f"Unknown peer: {target}"})
-            return
-        
-        ct_hex = self.peers[target].encrypt_pm(text.encode())
-        payload = encode_json_payload({"to": target, "ct": ct_hex})
-        await self._send(build_frame(MessageType.ROOM_PM, payload, self.identity))
-    
-    async def get_message(self) -> dict:
-        """Get next message from queue."""
-        return await self._msg_queue.get()
-    
-    async def request_room_list(self) -> None:
-        """Request list of available rooms from server."""
-        payload = encode_json_payload({"action": "list_rooms"})
-        await self._send(build_frame(MessageType.ROOM_LIST, payload, self.identity))
 
     # ── Connect ──────────────────────────────────────
     async def connect(self) -> bool:
@@ -1603,12 +1041,18 @@ class ChatApp(App):
             self._last_room_list_update = current_time
 
     async def _start_network(self) -> None:
-        # Start the network client
+        # FIX: wrap in try/except to surface errors in UI instead of silently swallowing
         try:
-            await self.net.start()
+            ok = await self.net.connect()
+            if ok:
+                # Auto-request room list after connection
+                await self.net.request_room_list()
+                # Auto-request user list for current room
+                await self._request_user_list()
+                # Start receive loop
+                await self.net.receive_loop()
         except Exception as e:
-            log = self.query_one("#chat-log", RichLog)
-            log.write(Text.from_markup(f"[red]Network error: {e}[/]"))
+            await self.net._msg_queue.put({"type": "error", "msg": f"Network fatal: {e}"})
 
     def _poll_messages(self) -> None:
         while not self.net._msg_queue.empty():
@@ -1954,14 +1398,7 @@ Examples:
     parser.add_argument("--pq-mode", action="store_true", help="Enable Post-Quantum hybrid cryptography")
     parser.add_argument("--identity", help="Load saved identity name")
     parser.add_argument("--password", help="Password for keystore/identity")
-    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
     args = parser.parse_args()
-    
-    # Configure debug logging if requested
-    if args.debug:
-        logging.getLogger().setLevel(logging.DEBUG)
-        log.setLevel(logging.DEBUG)
-    
     try:
         host, port_str = args.server.rsplit(":", 1)
         port = int(port_str)
@@ -1969,28 +1406,12 @@ Examples:
         print(f"Invalid address: {args.server}")
         sys.exit(1)
     
-    # Create client configuration
-    config = ClientConfig(
-        host=host,
-        port=port,
-        room=args.room,
-        use_tls=args.tls,
-        pq_mode=args.pq_mode,
-        identity_name=args.identity,
-        password=args.password,
-        debug=args.debug
+    # Create client with anonymous identity
+    client = ChatNetworkClient(
+        host, port, args.room, use_tls=args.tls, pq_mode=args.pq_mode,
+        identity_name=args.identity, password=args.password
     )
-    
-    # Create and run client
-    try:
-        client = ChatNetworkClient(config)
-        ChatApp(client).run()
-    except KeyboardInterrupt:
-        print("\nGoodbye!")
-        sys.exit(0)
-    except Exception as e:
-        log.error(f"Client error: {e}")
-        sys.exit(1)
+    ChatApp(client).run()
 
 
 if __name__ == "__main__":
