@@ -101,7 +101,8 @@ class IdentityKey:
 
     def fingerprint(self) -> str:
         digest = hashlib.sha256(bytes(self._pub_bytes)).hexdigest()
-        return ":".join(digest[i:i+4] for i in range(0, 32, 4))
+        # Take first 16 chars (8 parts of 2 chars each) for consistency
+        return ":".join(digest[i:i+2] for i in range(0, 8, 2))
 
     def destroy(self) -> None:
         """Wipe public key bytearray. Private key handed to GC."""
