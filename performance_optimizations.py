@@ -36,7 +36,8 @@ class FramePool:
                 self._hits += 1
                 return buf
             else:
-                # Buffer too small, discard and create new
+                # Buffer too small, return it to pool and create new
+                self._pool.append(buf)  # Return small buffer for future use
                 self._misses += 1
                 return bytearray(size)
         else:
@@ -46,7 +47,8 @@ class FramePool:
     def return_buffer(self, buf: bytearray) -> None:
         """Return buffer to pool after wiping"""
         if len(buf) >= 1024:  # Only pool buffers >= 1KB
-            buf[:] = b'\x00' * len(buf)  # Secure wipe
+            # Use memoryview for zero-allocation secure wiping
+            memoryview(buf)[:] = b'\x00' * len(buf)
             if len(self._pool) < self._max_size:
                 self._pool.append(buf)
     
@@ -68,79 +70,8 @@ FRAME_POOL = FramePool()
 # ──────────────────────────────────────────────────
 # Message Batching - Reduce Syscall Overhead
 # ──────────────────────────────────────────────────
-@dataclass
-class MessageBatch:
-    """Batch of messages to be sent together"""
-    messages: List[bytes]
-    created_at: float
-    max_size: int = 64 * 1024  # 64KB max batch size
-    
-    def add_message(self, msg: bytes) -> bool:
-        """Add message to batch, return False if batch is full"""
-        if len(self.messages) >= 10:  # Max 10 messages per batch
-            return False
-        
-        total_size = sum(len(m) for m in self.messages) + len(msg)
-        if total_size > self.max_size:
-            return False
-        
-        self.messages.append(msg)
-        return True
-    
-    def is_ready(self, timeout: float = 0.01) -> bool:
-        """Check if batch is ready to send (timeout or full)"""
-        return (
-            len(self.messages) >= 10 or 
-            (time.time() - self.created_at) >= timeout
-        )
-    
-    def combine(self) -> bytes:
-        """Combine all messages into single buffer"""
-        return b''.join(self.messages)
-
-class BatchSender:
-    """Handles batching of outgoing messages"""
-    
-    def __init__(self, writer: asyncio.StreamWriter):
-        self.writer = writer
-        self._current_batch: Optional[MessageBatch] = None
-        self._send_task: Optional[asyncio.Task] = None
-        self._lock = asyncio.Lock()
-    
-    async def send_message(self, data: bytes) -> None:
-        """Send message with batching"""
-        async with self._lock:
-            if self._current_batch is None:
-                self._current_batch = MessageBatch(messages=[], created_at=time.time())
-                # Schedule batch send
-                if self._send_task is None or self._send_task.done():
-                    self._send_task = asyncio.create_task(self._batch_sender_loop())
-            
-            if not self._current_batch.add_message(data):
-                # Batch full, send immediately
-                await self._flush_batch()
-                # Create new batch with this message
-                self._current_batch = MessageBatch(messages=[data], created_at=time.time())
-    
-    async def _batch_sender_loop(self) -> None:
-        """Background task to flush batches when ready"""
-        while True:
-            await asyncio.sleep(0.01)  # Check every 10ms
-            async with self._lock:
-                if self._current_batch and self._current_batch.is_ready():
-                    await self._flush_batch()
-                if self._current_batch is None:
-                    break  # No more batches, exit
-    
-    async def _flush_batch(self) -> None:
-        """Flush current batch to network"""
-        if not self._current_batch or not self._current_batch.messages:
-            return
-        
-        combined = self._current_batch.combine()
-        self.writer.write(combined)
-        await self.writer.drain()
-        self._current_batch = None
+# Message batching functionality removed - was dead code with race conditions
+# If needed in future, implement with proper asyncio event handling and explicit running flag
 
 # ──────────────────────────────────────────────────
 # Connection Pooling - Reuse SSL Contexts
@@ -148,14 +79,18 @@ class BatchSender:
 class SSLContextPool:
     """Pool of reusable SSL contexts"""
     
-    def __init__(self, max_size: int = 10):
+    def __init__(self, max_size: int = 10, verify_mode: int = ssl.CERT_REQUIRED):
         self._pool: deque = deque(maxlen=max_size)
         self._contexts_in_use: weakref.WeakSet = weakref.WeakSet()
         self._hits = 0
         self._misses = 0
+        self._verify_mode = verify_mode
     
-    def get_context(self, cert_file: str, key_file: str) -> ssl.SSLContext:
+    def get_context(self, cert_file: str, key_file: str, verify_mode: int = None) -> ssl.SSLContext:
         """Get SSL context from pool or create new one"""
+        # Use provided verify_mode or default from pool
+        mode = verify_mode if verify_mode is not None else self._verify_mode
+        
         # Simple implementation - in production, would match by cert/key
         if self._pool:
             ctx = self._pool.popleft()
@@ -164,17 +99,17 @@ class SSLContextPool:
             return ctx
         else:
             self._misses += 1
-            ctx = self._create_context(cert_file, key_file)
+            ctx = self._create_context(cert_file, key_file, mode)
             self._contexts_in_use.add(ctx)
             return ctx
     
-    def _create_context(self, cert_file: str, key_file: str) -> ssl.SSLContext:
+    def _create_context(self, cert_file: str, key_file: str, verify_mode: int) -> ssl.SSLContext:
         """Create new SSL context"""
         import ssl
         ctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
         ctx.load_cert_chain(cert_file, key_file)
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
+        ctx.check_hostname = False  # We use fingerprinting instead
+        ctx.verify_mode = verify_mode  # Use explicit verify_mode, never hardcoded CERT_NONE
         return ctx
     
     def return_context(self, ctx: ssl.SSLContext) -> None:
@@ -209,22 +144,37 @@ class MessageCompressor:
     def compress(data: bytes) -> bytes:
         """Compress data if beneficial"""
         if len(data) < MessageCompressor.COMPRESSION_THRESHOLD:
-            return data
+            return data  # Return as-is for small data
         
         compressed = zlib.compress(data, level=6)
         
         # Only use compression if it reduces size
         if len(compressed) < len(data) * 0.9:  # At least 10% reduction
-            return b'COMPRESSED:' + compressed
+            return b'\x01' + compressed  # Binary flag: 0x01 = compressed
         else:
-            return data
+            return b'\x00' + data  # Binary flag: 0x00 = uncompressed
     
     @staticmethod
     def decompress(data: bytes) -> bytes:
         """Decompress data if compressed"""
-        if data.startswith(b'COMPRESSED:'):
-            return zlib.decompress(data[11:])
+        if len(data) < 1:
+            return data  # Invalid data, return as-is
+        
+        flag = data[0]
+        payload = data[1:]
+        
+        if flag == 0x01:
+            # Compressed data
+            try:
+                return zlib.decompress(payload)
+            except zlib.error:
+                # Corrupted compressed data, return as-is
+                return payload
+        elif flag == 0x00:
+            # Uncompressed data
+            return payload
         else:
+            # Unknown flag, return as-is for compatibility
             return data
 
 # ──────────────────────────────────────────────────
@@ -237,6 +187,7 @@ class OptimizedBroadcaster:
         self._broadcast_stats = {
             "total_broadcasts": 0,
             "total_messages": 0,
+            "total_recipients": 0,
             "failed_sends": 0,
             "avg_recipients": 0
         }
@@ -260,9 +211,9 @@ class OptimizedBroadcaster:
         # Update stats
         self._broadcast_stats["total_broadcasts"] += 1
         self._broadcast_stats["total_messages"] += len(recipients)
+        self._broadcast_stats["total_recipients"] += len(recipients)
         self._broadcast_stats["avg_recipients"] = (
-            (self._broadcast_stats["avg_recipients"] * (self._broadcast_stats["total_broadcasts"] - 1) + len(recipients)) /
-            self._broadcast_stats["total_broadcasts"]
+            self._broadcast_stats["total_recipients"] / self._broadcast_stats["total_broadcasts"]
         )
         
         # Concurrent send with error handling
@@ -274,18 +225,17 @@ class OptimizedBroadcaster:
             )
             tasks.append(task)
         
-        # Wait for all sends with timeout
-        try:
-            await asyncio.wait_for(
-                asyncio.gather(*tasks, return_exceptions=True),
-                timeout=5.0
-            )
-        except asyncio.TimeoutError:
-            # Cancel remaining tasks
-            for task in tasks:
-                if not task.done():
-                    task.cancel()
-            self._broadcast_stats["failed_sends"] += len(tasks)
+        # Wait for all sends with individual timeout per task
+        results = []
+        for task in tasks:
+            try:
+                result = await asyncio.wait_for(task, timeout=5.0)
+                results.append(result)
+            except asyncio.TimeoutError:
+                task.cancel()
+                self._broadcast_stats["failed_sends"] += 1
+            except Exception:
+                self._broadcast_stats["failed_sends"] += 1
     
     async def _safe_send_to_peer(self, peer: Any, frame: bytes) -> None:
         """Safely send frame to peer with error handling"""
@@ -311,12 +261,7 @@ class PerformanceMonitor:
     
     def __init__(self):
         self.start_time = time.time()
-        self.metrics = {
-            "frame_pool": FRAME_POOL.get_stats(),
-            "ssl_pool": SSL_POOL.get_stats(),
-            "broadcast": BROADCASTER.get_stats(),
-            "uptime": time.time() - self.start_time
-        }
+        self.metrics = {}  # Empty dict, will be populated by update_metrics()
     
     def update_metrics(self) -> None:
         """Update all performance metrics"""

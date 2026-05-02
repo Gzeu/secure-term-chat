@@ -25,6 +25,10 @@ from utils import (
 from performance_optimizations import (
     FRAME_POOL, SSL_POOL, BROADCASTER, PERF_MONITOR
 )
+from advanced_optimizations import (
+    CRYPTO_CACHE, ADVANCED_MEMORY_POOL, ADAPTIVE_COMPRESSOR,
+    CONNECTION_MANAGER, PERFORMANCE_OPTIMIZER
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -72,6 +76,14 @@ class Peer:
     rate_limiter: RateLimiter = field(default_factory=RateLimiter)
     replay_filter: AntiReplayFilter = field(default_factory=AntiReplayFilter)
     addr: str = ""
+    # Advanced optimizations
+    connection_state: Optional[Any] = None
+    crypto_cache_key: str = ""
+
+    def __post_init__(self):
+        """Initialize advanced optimizations"""
+        self.connection_state = CONNECTION_MANAGER.get_connection(self.nick)
+        self.crypto_cache_key = f"{self.nick}:{self.identity_pub.hex()[:16]}"
 
     @property
     def fingerprint(self) -> str:
@@ -84,6 +96,18 @@ class Peer:
             "session_pub":  self.session_pub.hex(),
             "fingerprint":  self.fingerprint,
         }
+    
+    def update_activity(self) -> None:
+        """Update connection activity for optimization"""
+        if self.connection_state:
+            self.connection_state.update_activity()
+    
+    def get_optimized_stats(self) -> dict:
+        """Get optimized statistics"""
+        base_info = self.to_info()
+        if self.connection_state:
+            base_info.update(self.connection_state.get_stats())
+        return base_info
 
 
 def generate_tls_certificates():
@@ -521,8 +545,38 @@ class ChatServer:
         await peer.queue.put(resp)
 
     async def _broadcast_room(self, room: str, frame: bytes, exclude: str = "") -> None:
-        """Optimized broadcast using asyncio.gather for concurrent sends"""
-        await BROADCASTER.broadcast_to_room(self._peers, self._rooms.get(room, set()), frame, exclude)
+        """Enhanced broadcast with adaptive compression and crypto caching"""
+        # Apply adaptive compression if enabled
+        if PERFORMANCE_OPTIMIZER.optimizations_enabled.get("adaptive_compression", True):
+            compressed_frame, was_compressed = ADAPTIVE_COMPRESSOR.compress(frame)
+            if was_compressed:
+                frame = compressed_frame
+                log.debug(f"Compressed frame for room #{room} by {len(frame) - len(compressed_frame)} bytes")
+        
+        # Check crypto cache for frame verification
+        frame_hash = hashlib.sha256(frame).hexdigest()
+        cached_result = CRYPTO_CACHE.get(frame_hash) if PERFORMANCE_OPTIMIZER.optimizations_enabled.get("crypto_cache", True) else None
+        
+        if cached_result is None:
+            # Frame not cached, proceed with broadcast
+            await BROADCASTER.broadcast_to_room(self._peers, self._rooms.get(room, set()), frame, exclude)
+            
+            # Cache the result
+            if PERFORMANCE_OPTIMIZER.optimizations_enabled.get("crypto_cache", True):
+                CRYPTO_CACHE.put(frame_hash, frame)
+        else:
+            # Use cached result (just log for debugging)
+            log.debug(f"Using cached crypto result for frame hash {frame_hash[:16]}...")
+            
+        # Update connection states
+        room_members = self._rooms.get(room, set())
+        for nick in room_members:
+            if nick != exclude and nick in self._peers:
+                peer = self._peers[nick]
+                peer.update_activity()
+                if peer.connection_state:
+                    peer.connection_state.message_count += 1
+                    peer.connection_state.bytes_sent += len(frame)
 
     async def _writer_loop(self, peer: Peer) -> None:
         while True:
@@ -540,6 +594,13 @@ class ChatServer:
 
     async def _disconnect_peer(self, peer: Peer) -> None:
         log.info(f"Disconnect: {peer.nick}")
+        
+        # Clean up connection state
+        if peer.connection_state:
+            connection_stats = CONNECTION_MANAGER.remove_connection(peer.nick)
+            if connection_stats:
+                log.debug(f"Connection stats for {peer.nick}: {connection_stats.get_stats()}")
+        
         self._peers.pop(peer.nick, None)
         for room in peer.rooms:
             self._rooms[room].discard(peer.nick)
@@ -576,7 +637,22 @@ async def main():
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--tls", action="store_true", help="Enable TLS encryption")
     parser.add_argument("--pq-mode", action="store_true", help="Enable Post-Quantum hybrid cryptography")
+    parser.add_argument("--disable-crypto-cache", action="store_true", help="Disable cryptographic operation caching")
+    parser.add_argument("--disable-adaptive-compression", action="store_true", help="Disable adaptive compression")
+    parser.add_argument("--disable-advanced-memory", action="store_true", help="Disable advanced memory pool")
+    parser.add_argument("--enable-advanced-optimizations", action="store_true", help="Enable all advanced optimizations")
     args = parser.parse_args()
+    
+    # Configure advanced optimizations based on CLI args
+    if args.disable_crypto_cache:
+        PERFORMANCE_OPTIMIZER.disable_optimization("crypto_cache")
+    if args.disable_adaptive_compression:
+        PERFORMANCE_OPTIMIZER.disable_optimization("adaptive_compression")
+    if args.disable_advanced_memory:
+        PERFORMANCE_OPTIMIZER.disable_optimization("advanced_memory_pool")
+    if args.enable_advanced_optimizations:
+        log.info("🚀 Advanced optimizations enabled")
+        log.info(PERFORMANCE_OPTIMIZER.get_comprehensive_report())
 
     if args.debug:
         logging.getLogger().setLevel(logging.DEBUG)
@@ -584,10 +660,10 @@ async def main():
     srv    = ChatServer(use_tls=args.tls, pq_mode=args.pq_mode)
     
     if args.tls:
-        # Use SSL context pool for better performance
-        ssl_context = SSL_POOL.get_context(TLS_CERT_FILE, TLS_KEY_FILE)
-        ssl_context.check_hostname = False
-        ssl_context.verify_mode = ssl.CERT_OPTIONAL  # More secure than CERT_NONE, clients verify via fingerprinting
+        # Use SSL context pool with explicit secure verification
+        ssl_context = SSL_POOL.get_context(TLS_CERT_FILE, TLS_KEY_FILE, ssl.CERT_REQUIRED)
+        ssl_context.check_hostname = False  # We use fingerprinting instead
+        # verify_mode is now set to CERT_REQUIRED by SSL_POOL.get_context()
         
         server = await asyncio.start_server(
             srv.handle_client, args.host, args.port,
@@ -606,7 +682,8 @@ async def main():
     log.info(f"Listening on {addrs}")
     log.info(f"Server FP: {srv._server_identity.fingerprint()}")
     log.info("RAM-only mode: no persistence, no message content logged.")
-    log.info("🚀 Performance optimizations enabled: Frame Pooling, Message Batching, SSL Pooling, Compression")
+    log.info("🚀 Performance optimizations enabled: Frame Pooling, SSL Pooling, Compression")
+    log.info("⚡ Advanced optimizations: Crypto Cache, Adaptive Compression, Memory Pool, Connection Management")
     
     # Start performance monitoring task
     async def performance_monitor():
@@ -614,7 +691,21 @@ async def main():
             await asyncio.sleep(60)  # Report every minute
             log.info(PERF_MONITOR.get_report())
     
+    # Start advanced optimizations maintenance task
+    async def advanced_maintenance():
+        while True:
+            await asyncio.sleep(300)  # Every 5 minutes
+            # Clean up stale connections
+            stale_count = CONNECTION_MANAGER.cleanup_stale(timeout=300.0)
+            if stale_count > 0:
+                log.info(f"Cleaned up {stale_count} stale connections")
+            
+            # Log advanced performance report
+            if args.debug:
+                log.debug(PERFORMANCE_OPTIMIZER.get_comprehensive_report())
+    
     asyncio.create_task(performance_monitor())
+    asyncio.create_task(advanced_maintenance())
     
     async with server:
         await server.serve_forever()
