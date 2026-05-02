@@ -17,9 +17,11 @@ from utils import (
     InvalidTag,
 )
 
+@pytest.mark.crypto
 class TestSimpleCrypto:
     """Simple, working cryptographic tests."""
     
+    @pytest.mark.crypto
     def test_message_encryption_decryption(self):
         """Test XChaCha20-Poly1305 encryption/decryption."""
         key = secrets.token_bytes(32)
@@ -31,6 +33,7 @@ class TestSimpleCrypto:
         assert decrypted == message
         assert encrypted != message
     
+    @pytest.mark.crypto
     def test_message_encryption_fails_wrong_key(self):
         """Test decryption fails with wrong key."""
         key1 = secrets.token_bytes(32)
@@ -42,6 +45,7 @@ class TestSimpleCrypto:
         with pytest.raises(InvalidTag):
             decrypt_message(key2, encrypted)
     
+    @pytest.mark.crypto
     def test_room_key_derivation(self):
         """Test room key derivation from session key."""
         room_seed = secrets.token_bytes(32)
@@ -53,6 +57,7 @@ class TestSimpleCrypto:
         assert len(room_key) == 32
         assert len(room_salt) == 32
     
+    @pytest.mark.crypto
     def test_different_seeds_different_keys(self):
         """Test different seeds produce different keys."""
         seed1 = secrets.token_bytes(32)
