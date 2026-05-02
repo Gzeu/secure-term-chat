@@ -1,373 +1,91 @@
 # secure-term-chat
 
-> Anonymous E2EE encrypted terminal chat with Post-Quantum cryptography support
-
-> Cryptographic stack: X25519 + ML-KEM-768 + Double Ratchet + TLS 1.3
+> Anonymous E2EE encrypted terminal chat with group chat support
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)](https://python.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Security: Post-Quantum](https://img.shields.io/badge/security-Post--Quantum-purple)]()
-[![CI/CD](https://img.shields.io/badge/CI%2FCD-GitHub%20Actions-blue)]()
 [![Docker](https://img.shields.io/badge/Docker-ready-blue)]()
 
 ---
 
-## Features
+## 🚀 Quick Start
 
-### Security Features
-- **Signal Sender Keys**: Proper E2E group chat without server key access
-- **Post-Quantum Ready**: X25519 + ML-KEM-768 hybrid key exchange (experimental)
-- **Double Encryption**: TLS 1.3 + End-to-End Encryption (XChaCha20-Poly1305)
-- **Advanced Cryptography**: X25519 ECDH + Ed25519 signatures + HKDF-SHA512
-- **Certificate Pinning**: TLS with TOFU (Trust-On-First-Use) fingerprinting
-- **Forward Secrecy**: Double Ratchet with perfect forward secrecy
-- **Identity Management**: Anonymous identities with optional keystore persistence
-- **Server Security**: Server never sees room keys or message content
+### 1. Start Server
+```bash
+python server.py --tls
+```
 
-### Chat Features
-- **Multi-User Chat**: Real-time encrypted messaging in rooms
-- **Room Management**: Create and join encrypted chat rooms with user counts
-- **Secure File Transfer**: Encrypted file sharing with real-time progress tracking
-- **User Lists**: Live user presence and room member information
-- **Modern UI**: Clean terminal interface with side panels and rich formatting
-- **Responsive Design**: Auto-focus input, dynamic progress bars, clean layout
-- **Command System**: Intuitive commands for room management and user interaction
+### 2. Connect Clients
+```bash
+# Anonymous client
+python client.py localhost:12345 --room crypto --tls
 
-### Technical Features
-- **Network Security**: TLS 1.3 with automatic certificate generation
-- **Memory Safety**: Secure key storage with automatic cleanup
-- **Performance**: Optimized for low-latency messaging and file transfers
-- **Developer Tools**: Comprehensive testing suite, CI/CD pipeline, Docker support
-- **Documentation**: Complete security analysis and usage guides
+# With persistent identity
+python client.py localhost:12345 --room crypto --tls --identity alice --password mypass
+```
+
+### 3. Verify Fingerprints
+Server and client show fingerprints - verify out-of-band for security.
+
+---
+
+## 💬 Commands
+
+### Chat Commands
+- `/help` - Show all commands
+- `/join #room` - Join/create room
+- `/rooms` - List available rooms
+- `/users` - Show users in current room
+- `/pm @user message` - Send private message
+- `/quit` - Exit and wipe keys
+
+### Security Commands
+- `/identity` - Show your fingerprint
+- `/keys` - Show all known fingerprints
+- `/verify @user` - Show user's fingerprint
+- `/filesend path` - Send encrypted file
+
+---
+
+## 🔐 Security
+
+- **End-to-End Encryption**: XChaCha20-Poly1305
+- **Key Exchange**: X25519 ECDH + Ed25519 signatures
+- **Forward Secrecy**: Double ratchet per session
+- **TLS**: Certificate pinning with TOFU
+- **Zero-Knowledge**: Server cannot read messages
 
 ---
 
 ## 📦 Installation
 
-### Quick Install
 ```bash
 git clone https://github.com/Gzeu/secure-term-chat
 cd secure-term-chat
 pip install -e .
 ```
 
-### Development Setup
-```bash
-./scripts/setup_dev.sh
-source venv/bin/activate
-```
-
-### Docker
-```bash
-docker run -p 12345:12345 gzeu/secure-term-chat:latest
-```
-
----
-
-## 🚀 Quick Start
-
-### 1. Start the server
-
-```bash
-python server.py --port 12345
-```
-
-The server prints its **fingerprint** — verify it out-of-band with participants.
-
-### 2. Connect clients (different terminals)
-
-```bash
-# Anonymous client (temporary identity)
-python client.py localhost:12345 --room crypto --tls
-
-# With saved identity
-python client.py localhost:12345 --room crypto --tls --identity myname --password mypass
-
-# Note: PQ mode temporarily disabled for performance improvements
-```
-
-### 3. Verify fingerprints
-
-When a peer joins, their Ed25519 fingerprint appears colored:
-- 🟢 `[NEW]` — first time seen, stored in TOFU
-- 🟢 `[OK]` — fingerprint matches TOFU store  
-- 🔴 `[⚠ MISMATCH]` — fingerprint changed! **Do not trust!**
-
-Verify fingerprints out-of-band (phone call, Signal, etc.).
-
----
-
-## 💬 Commands
-
-| Command | Description |
-|---|---|
-| `/join #room` | Switch to a different room |
-| `/rooms` | List all available rooms |
-| `/pm @user message` | Send encrypted private message |
-| `/identity` | Show current anonymous identity |
-| `/identity save <name> <pwd>` | Save current identity |
-| `/identity load <name> <pwd>` | Load saved identity |
-| `/identity new` | Generate new temporary identity |
-| `/keys` | Display all known fingerprints |
-| `/verify @user` | Show peer fingerprint for OOB verification |
-| `/filesend path/to/file` | Send encrypted file to current room |
-| `/users` | List users in current room |
-| `/quit` | Disconnect and wipe keys |
-
-### Anonymous Identity Usage
-
-```bash
-# Show current temporary identity
-/identity
-
-# Save identity for later use
-/identity save alice mypassword123
-
-# Load saved identity
-/identity load alice mypassword123
-
-# Generate completely new identity
-/identity new
-```
-
 ---
 
 ## 🏗️ Architecture
 
-```mermaid
-flowchart TD
-    A[Alice Client] -->|HELLO + Ed25519 sig| S[Relay Server]
-    B[Bob Client] -->|HELLO + Ed25519 sig| S
-    S -->|HELLO_ACK + roster + server FP| A
-    S -->|HELLO_ACK + roster + server FP| B
-    A -->|X25519 ECDH pub key| S
-    B -->|X25519 ECDH pub key| S
-    A <-->|Encrypted blob — server cannot read| S
-    S <-->|Encrypted blob — server cannot read| B
-    A -.->|TOFU fingerprint verify| OOB[Out-of-Band Channel]
-    B -.->|TOFU fingerprint verify| OOB
-```
+**Zero-Knowledge Design**: Server relays encrypted blobs without accessing content.
 
-```mermaid
-sequenceDiagram
-    participant Alice
-    participant Server
-    participant Bob
+**Room Key Distribution**: Server coordinates encrypted key sharing for group chat.
 
-    Alice->>Server: HELLO (nick, Ed25519_pub, X25519_pub)
-    Server-->>Alice: HELLO_ACK (server_fp, room_list)
-    Bob->>Server: HELLO (nick, Ed25519_pub, X25519_pub)
-    Server-->>Bob: HELLO_ACK
-    Alice->>Server: ROOM_JOIN (#default)
-    Bob->>Server: ROOM_JOIN (#default)
-    Server-->>Alice: USER_LIST (roster with Bob's keys)
-    Server-->>Bob: JOIN_EVENT (Alice's keys)
-    Note over Alice,Bob: ECDH: Alice X25519 ⊕ Bob X25519 → shared_secret
-    Note over Alice,Bob: HKDF(shared_secret, salt, info) → session_key
-    Note over Alice,Bob: SymmetricRatchet(session_key) started
-    Alice->>Server: ROOM_CHAT (encrypted_blob)
-    Server-->>Bob: ROOM_CHAT (relayed — server sees only ciphertext)
-    Bob->>Alice: ROOM_PM (E2EE ratcheted private message)
-```
+**End-to-End Encryption**: Messages encrypted with XChaCha20-Poly1305 between participants.
 
 ---
 
-## 🔐 Cryptographic Design
+## 📋 Requirements
 
-### Key Hierarchy
-
-```
-Ed25519 Identity Key  (long-lived, for signatures + TOFU)
-    └── X25519 Session Key  (ephemeral per session)
-            └── ECDH Shared Secret
-                    └── HKDF-SHA512
-                            ├── Session Enc Key (32 bytes)
-                            ├── Room Key = HKDF(session_key, room_name)
-                            └── Ratchet Root Key
-                                    ├── chain_key_0 → msg_key_0 (XChaCha20-Poly1305)
-                                    ├── chain_key_1 → msg_key_1
-                                    └── chain_key_N → msg_key_N  (PFS: old keys wiped)
-```
-
-### XChaCha20-Poly1305
-
-- 24-byte nonce (avoids nonce reuse risk of ChaCha20's 12-byte)
-- Nonce extension via HChaCha20 subkey derivation (HKDF-based)
-- AEAD: ciphertext authenticated with Poly1305 MAC
-- Fresh random nonce per message
-
-### Anti-Replay
-
-```
-Each frame contains:
-  nonce_id  [32 random bytes] — unique per message
-  timestamp [float64]        — signed, validated ±30s
-
-Server + client maintain sliding window of seen nonces.
-Duplicate or stale frames are silently dropped.
-```
-
-### Forward Secrecy (Ratchet)
-
-```python
-# Each message advances the chain:
-msg_key   = HKDF(chain_key, "msg",   counter)  # used once then wiped
-chain_key = HKDF(chain_key, "chain", counter)  # replaces old chain_key
-# Old chain_key is overwritten in memory → past messages protected
-```
+- Python 3.12+
+- `cryptography>=41.0.0`
+- `textual>=0.41.0`
+- `pynacl>=1.5.0`
 
 ---
 
-## 🛡️ Security Properties
+## 📄 License
 
-| Property | Status |
-|---|---|
-| End-to-End Encryption | ✅ Server sees only ciphertext |
-| Forward Secrecy | ✅ Ratchet wipes old keys |
-| Break-in Recovery | ⚠️ Partial (session-level, no full DR) |
-| Replay Protection | ✅ Nonce + timestamp |
-| Authentication | ✅ Ed25519 + TOFU |
-| DoS Protection | ✅ Rate limiting + queue caps |
-| Key Compromise (server) | ✅ Server has no message keys |
-| RAM-only | ✅ No disk writes |
-| Metadata Leakage | ⚠️ Server sees nicks, rooms, timing |
-
----
-
-## 🧪 Security Tests
-
-### Run crypto unit tests
-
-```bash
-python utils.py
-```
-
-Expected output:
-```
-[TEST] Identity Key Generation
-  Fingerprint: a1b2:c3d4:...
-[TEST] X25519 ECDH Key Exchange
-  Shared secrets match ✓
-[TEST] HKDF Key Derivation
-  Derived key: ...
-[TEST] XChaCha20-Poly1305 Encrypt/Decrypt
-  Encrypt/Decrypt OK ✓
-[TEST] Anti-Replay Filter
-  Replay blocked ✓
-[TEST] Symmetric Ratchet (Forward Secrecy)
-  Ratchet 5 messages OK ✓
-[TEST] Wire Frame Build/Parse
-  Frame sign/verify OK ✓
-
-[ALL TESTS PASSED] ✓
-```
-
-### Multi-client test (3 terminals)
-
-```bash
-# T1:
-python server.py --port 12345
-
-# T2:
-python client.py localhost:12345 --nick Alice --room test
-
-# T3:
-python client.py localhost:12345 --nick Bob --room test
-# Bob sees Alice's fingerprint → verify via T2
-# Send messages — Bob can read them, server cannot
-```
-
-### Replay Attack Test
-
-Send same message frame twice:
-```bash
-# AntiReplayFilter will reject duplicate nonce_id
-# Output: [WARN] Replay/stale frame from Alice
-```
-
-### PFS Test (New Session = Old Encrypted Safe)
-
-```bash
-# Step 1: Record encrypted frames from a session
-# Step 2: Restart client (new ephemeral X25519 key generated)
-# Step 3: Old frames cannot be decrypted — shared secret changed
-```
-
-### Server Key Compromise Test
-
-```bash
-# Server holds: server identity key (for frame signing/ACKs)
-# Server does NOT hold: session keys, room keys, message keys
-# Compromising server.py reveals: who connected, when, to which rooms
-# Does NOT reveal: message content (all ciphertext, keys are client-side)
-```
-
----
-
-## 📁 File Structure
-
-```
-secure-term-chat/
-├── server.py              # Discovery & relay server (asyncio TCP)
-├── client.py              # TUI client (Textual + asyncio)
-├── utils.py               # Crypto primitives + wire protocol
-├── keystore.py            # Anonymous identity keystore
-├── Dockerfile             # Multi-stage container build
-├── pyproject.toml         # Package configuration
-├── .github/workflows/     # CI/CD pipeline
-├── scripts/               # Development tools
-│   └── setup_dev.sh      # Development environment setup
-├── tests/                 # Test suite
-│   ├── test_crypto.py    # Cryptographic tests
-│   ├── test_integration.py # End-to-end tests
-│   ├── test_performance.py # Performance benchmarks
-│   └── test_*.py         # Other test files
-├── .pre-commit-config.yaml # Pre-commit hooks
-├── .dockerignore          # Docker ignore file
-├── CHANGELOG.md           # Version history
-├── README.md
-└── LICENSE
-```
-
----
-
-## ⚙️ Configuration
-
-```bash
-# Server options
-python server.py --host 0.0.0.0 --port 12345 --debug
-
-# Client options
-python client.py host:port --nick NICKNAME --room ROOM
-```
-
----
-
-## 📊 Performance (Approximate)
-
-| Operation | ~Speed |
-|---|---|
-| XChaCha20-Poly1305 encrypt (1KB) | < 0.1ms |
-| ECDH key exchange | < 1ms |
-| HKDF-SHA512 | < 0.5ms |
-| Ed25519 sign | < 1ms |
-| File chunk encrypt (64KB) | < 2ms |
-
----
-
-## ⚠️ Limitations & Future Work
-
-- **Group chat ratchet**: Currently uses a shared room key per session (not full Double Ratchet per sender). For highest security group chats, use Signal-style Sender Keys.
-- **Metadata**: Server knows nicks, room names, connection timing.
-- **No P2P/WebRTC**: Relay-only. Direct P2P via ICE/STUN would bypass server entirely.
-- **Key persistence**: Intentional RAM-only; add optional encrypted keystore for identity persistence.
-
----
-
-## 📜 License
-
-MIT License — see [LICENSE](LICENSE)
-
----
-
-*Built with ❤️ for privacy. Verify fingerprints. Trust no one blindly.*
+MIT License - see [LICENSE](LICENSE) file for details.
