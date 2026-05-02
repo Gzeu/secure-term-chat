@@ -886,15 +886,108 @@ class ChatNetworkClient:
 # ──────────────────────────────────────────────────
 class ChatApp(App):
     CSS = """
-    Screen { background: #0d1117; }
-    #chat-log  { border: solid #30363d; height: 1fr; padding: 0 1; }
-    #side-panel { width: 28; border: solid #30363d; padding: 0 1; }
-    #status-bar { height: 3; border: solid #30363d; padding: 0 1; color: #8b949e; }
-    #input-box  { dock: bottom; height: 3; border: solid #58a6ff; }
-    #progress-container { height: 3; border: solid #30363d; margin: 0 1; display: none; }
-    #progress-container.visible { display: block; }
-    #file-progress { width: 1fr; }
-    #progress-info { width: 30; padding: 0 1; }
+    Screen { 
+        background: linear-gradient(135deg, #1a1a2e 0%, #0f0f23 50%, #16213e 100%);
+        text-style: bold;
+    }
+    
+    #chat-log { 
+        border: solid #3a3f5c; 
+        height: 1fr; 
+        padding: 0 1; 
+        background: rgba(26, 26, 46, 0.8);
+        scrollbar-background: rgba(58, 63, 92, 0.5);
+        scrollbar-thumb: #58a6ff;
+        scrollbar-thumb-hover: #79c0ff;
+        scrollbar-thumb-active: #91cbff;
+    }
+    
+    #side-panel { 
+        width: 30; 
+        border: solid #3a3f5c; 
+        padding: 0 1; 
+        background: rgba(22, 33, 62, 0.9);
+        box-shadow: inset 0 0 20px rgba(88, 166, 255, 0.1);
+    }
+    
+    #status-bar { 
+        height: 3; 
+        border: solid #3a3f5c; 
+        padding: 0 1; 
+        color: #a8b2d1; 
+        background: rgba(26, 26, 46, 0.9);
+        text-style: bold;
+    }
+    
+    #input-box  { 
+        dock: bottom; 
+        height: 3; 
+        border: solid #58a6ff; 
+        background: rgba(26, 26, 46, 0.9);
+        text-style: bold;
+        box-shadow: 0 0 10px rgba(88, 166, 255, 0.3);
+    }
+    
+    #input-box:focus {
+        border: solid #79c0ff;
+        box-shadow: 0 0 15px rgba(121, 192, 255, 0.5);
+    }
+    
+    #progress-container { 
+        height: 3; 
+        border: solid #3a3f5c; 
+        margin: 0 1; 
+        display: none; 
+        background: rgba(26, 26, 46, 0.9);
+    }
+    
+    #progress-container.visible { 
+        display: block; 
+    }
+    
+    #file-progress { 
+        width: 1fr; 
+    }
+    
+    #progress-info { 
+        width: 30; 
+        padding: 0 1; 
+    }
+    
+    RichLog {
+        background: transparent;
+    }
+    
+    .chat-message {
+        color: #e2e8f0;
+        text-style: normal;
+    }
+    
+    .system-message {
+        color: #58a6ff;
+        text-style: italic;
+    }
+    
+    .error-message {
+        color: #f85149;
+        text-style: bold;
+    }
+    
+    .success-message {
+        color: #56d364;
+        text-style: bold;
+    }
+    
+    Header {
+        background: rgba(26, 26, 46, 0.9);
+        text-style: bold;
+        color: #58a6ff;
+    }
+    
+    Footer {
+        background: rgba(26, 26, 46, 0.9);
+        color: #8b949e;
+    }
     """
 
     def __init__(self, net: ChatNetworkClient):
@@ -925,11 +1018,11 @@ class ChatApp(App):
     def on_mount(self) -> None:
         self.query_one("#chat-log", RichLog).write(
             Text.from_markup(
-                f"[bold cyan]╔══ secure-term-chat ══╗[/]\n"
-                f"[cyan]Nick:[/] {self.net.nick}\n"
-                f"[cyan]Room:[/] #{self.net.room}\n"
-                f"[cyan]FP:[/] [green]{self.net.fingerprint}[/]\n"
-                f"[dim]Type /help for commands[/]"
+                f"[bold #58a6ff]╔══ 🌟 secure-term-chat 🌟 ══╗[/]\n"
+                f"[#79c0ff]Nick:[/] [bold]{self.net.nick}[/]\n"
+                f"[#79c0ff]Room:[/] [bold]#{self.net.room}[/]\n"
+                f"[#79c0ff]FP:[/] [bold #56d364]{self.net.fingerprint}[/]\n"
+                f"[#8b949e]✨ Type /help for commands ✨[/]"
             )
         )
         asyncio.create_task(self._start_network())
@@ -979,20 +1072,20 @@ class ChatApp(App):
         ts  = time.strftime("%H:%M:%S")
         t   = msg["type"]
         if t == "chat":
-            audit = f" [dim]#{msg.get('audit','')[:8]}[/]" if msg.get("audit") else ""
-            log.write(Text.from_markup(f"[dim]{ts}[/] [bold white]{msg['from']}[/]: {msg['msg']}{audit}"))
+            audit = f" [dim #8b949e]#{msg.get('audit','')[:8]}[/]" if msg.get("audit") else ""
+            log.write(Text.from_markup(f"[dim #8b949e]{ts}[/] [bold #e2e8f0]{msg['from']}[/]: {msg['msg']}{audit}"))
         elif t == "pm":
-            log.write(Text.from_markup(f"[dim]{ts}[/] [bold magenta]PM ← {msg['from']}:[/] {msg['msg']}"))
+            log.write(Text.from_markup(f"[dim #8b949e]{ts}[/] [bold #ff79c6]💬 PM ← {msg['from']}:[/] {msg['msg']}"))
         elif t == "system":
-            log.write(Text.from_markup(f"[dim]{ts}[/] [bold cyan]● {msg['msg']}[/]"))
+            log.write(Text.from_markup(f"[dim #8b949e]{ts}[/] [bold #58a6ff]ℹ️ {msg['msg']}[/]"))
         elif t == "event":
-            color = "green" if msg.get("trust") in ("OK", "NEW") else "red"
-            log.write(Text.from_markup(f"[dim]{ts}[/] [bold {color}]▶ {msg['msg']}[/]"))
+            color = "#56d364" if msg.get("trust") in ("OK", "NEW") else "#f85149"
+            log.write(Text.from_markup(f"[dim #8b949e]{ts}[/] [bold {color}]▶ {msg['msg']}[/]"))
             # Refresh user list when someone joins
             if "joined" in msg.get("msg", "").lower():
                 asyncio.create_task(self._request_user_list())
         elif t == "error":
-            log.write(Text.from_markup(f"[dim]{ts}[/] [bold red]✗ {msg['msg']}[/]"))
+            log.write(Text.from_markup(f"[dim #8b949e]{ts}[/] [bold #f85149]❌ {msg['msg']}[/]"))
         elif t == "file_progress":
             self._handle_file_progress(msg)
         elif t == "room_list":
@@ -1006,30 +1099,30 @@ class ChatApp(App):
         log = self.query_one("#chat-log", RichLog)
         
         # Update chat log
-        lines = ["[bold cyan]🏠 Available Rooms:[/]"]
+        lines = ["[bold #58a6ff]🏠 Available Rooms:[/]"]
         for room_name, room_data in rooms.items():
             member_count = room_data.get("member_count", 0)
-            current_marker = " [green]← current[/]" if room_name == self.net.room else ""
-            lines.append(f"  [yellow]#{room_name}[/] ({member_count} members){current_marker}")
+            current_marker = " [bold #56d364]← current[/]" if room_name == self.net.room else ""
+            lines.append(f"  [#ffab70]#{room_name}[/] ({member_count} members){current_marker}")
         
         log.write(Text.from_markup("\n".join(lines)))
         
         # Also update side panel with room info
         users_panel = self.query_one("#users-panel", RichLog)
         users_panel.clear()
-        users_panel.write(Text.from_markup("[bold cyan]🏠 Rooms[/]"))
+        users_panel.write(Text.from_markup("[bold #58a6ff]🏠 Rooms[/]"))
         
         for room_name, room_data in rooms.items():
             member_count = room_data.get("member_count", 0)
-            current_marker = " [green]←[/]" if room_name == self.net.room else ""
+            current_marker = " [bold #56d364]←[/]" if room_name == self.net.room else ""
             users_panel.write(Text.from_markup(f"#{room_name} ({member_count}){current_marker}"))
         
         # Add separator for users
-        users_panel.write(Text.from_markup("\n[bold cyan]👥 Users:[/]"))
+        users_panel.write(Text.from_markup("\n[bold #58a6ff]👥 Users:[/]"))
         
         # Show current room users
         for peer_nick in self.net.peers.keys():
-            users_panel.write(Text.from_markup(f"  [green]{peer_nick}[/]"))
+            users_panel.write(Text.from_markup(f"  [bold #56d364]{peer_nick}[/]"))
 
     def _handle_user_list(self, msg: dict) -> None:
         """Handle user list update."""
@@ -1043,15 +1136,15 @@ class ChatApp(App):
         
         # Update chat log
         if all_users:
-            lines = ["[bold cyan]👥 Users in room:[/]"]
+            lines = ["[bold #58a6ff]👥 Users in room:[/]"]
             for user in sorted(all_users):
-                lines.append(f"  [green]{user}[/]")
+                lines.append(f"  [bold #56d364]{user}[/]")
             log.write(Text.from_markup("\n".join(lines)))
         
         # Update side panel
-        users_panel.write(Text.from_markup("[bold cyan]👥 Users:[/]"))
+        users_panel.write(Text.from_markup("[bold #58a6ff]👥 Users:[/]"))
         for user in sorted(all_users):
-            users_panel.write(Text.from_markup(f"  [green]{user}[/]"))
+            users_panel.write(Text.from_markup(f"  [bold #56d364]{user}[/]"))
 
     def _handle_file_progress(self, msg: dict) -> None:
         """Handle file transfer progress updates."""
@@ -1082,7 +1175,7 @@ class ChatApp(App):
         
         # Update info text
         speed_text = f"{speed_kb_s:.1f}KB/s" if speed_kb_s > 0 else "calculating..."
-        info_text = f"[cyan]{filename}[/]\n[dim]{chunk_id+1}/{total}[/]\n[yellow]{speed_text}[/]\n[dim]ETA: {eta}[/]"
+        info_text = f"[#79c0ff]{filename}[/]\n[dim #8b949e]{chunk_id+1}/{total}[/]\n[#ffab70]{speed_text}[/]\n[dim #8b949e]ETA: {eta}[/]"
         progress_info.update(info_text)
         
         # Hide progress bar when complete
@@ -1097,7 +1190,7 @@ class ChatApp(App):
             # Also show completion message in chat log
             log = self.query_one("#chat-log", RichLog)
             ts = time.strftime("%H:%M:%S")
-            log.write(Text.from_markup(f"[dim]{ts}[/] [bold green]✓[/] [cyan]{filename}[/] [dim]from {sender}[/]"))
+            log.write(Text.from_markup(f"[dim #8b949e]{ts}[/] [bold #56d364]✅[/] [#79c0ff]{filename}[/] [dim #8b949e]from {sender}[/]"))
             
             # Refocus input box after transfer completes
             input_box = self.query_one("#input-box", Input)
@@ -1114,7 +1207,7 @@ class ChatApp(App):
             asyncio.create_task(self.net.send_room_message(text))  # FIX: create_task
             ts = time.strftime("%H:%M:%S")
             self.query_one("#chat-log", RichLog).write(
-                Text.from_markup(f"[dim]{ts}[/] [bold green]{self.net.nick}[/] [dim](you)[/]: {text}")
+                Text.from_markup(f"[dim #8b949e]{ts}[/] [bold #56d364]{self.net.nick}[/] [dim #8b949e](you)[/]: {text}")
             )
 
     async def _handle_command(self, text: str) -> None:
@@ -1124,16 +1217,16 @@ class ChatApp(App):
 
         if cmd == "/help":
             lines = [
-                "[bold cyan]Commands:[/]",
-                "  [yellow]/join #room[/]         — Join room",
-                "  [yellow]/rooms[/]              — List all available rooms",
-                "  [yellow]/pm @user msg[/]       — Send encrypted PM",
-                "  [yellow]/identity[/]           — Manage anonymous identity",
-                "  [yellow]/keys[/]               — Show all fingerprints",
-                "  [yellow]/verify @user[/]       — Show peer fingerprint for OOB check",
-                "  [yellow]/filesend path[/]      — Send encrypted file to room",
-                "  [yellow]/users[/]              — List room users",
-                "  [yellow]/quit[/]               — Exit & wipe keys"
+                "[bold #58a6ff]🌟 Commands:[/]",
+                "  [#ffab70]/join #room[/]         — 🏠 Join room",
+                "  [#ffab70]/rooms[/]              — 🏠 List all available rooms",
+                "  [#ffab70]/pm @user msg[/]       — 💬 Send encrypted PM",
+                "  [#ffab70]/identity[/]           — 👤 Manage anonymous identity",
+                "  [#ffab70]/keys[/]               — 🔑 Show all fingerprints",
+                "  [#ffab70]/verify @user[/]       — 🔍 Show peer fingerprint for OOB check",
+                "  [#ffab70]/filesend path[/]      — 📁 Send encrypted file to room",
+                "  [#ffab70]/users[/]              — 👥 List room users",
+                "  [#ffab70]/quit[/]               — 🚪 Exit & wipe keys"
             ]
             log.write(Text.from_markup("\n".join(lines)))
         elif cmd == "/join" and len(parts) >= 2:
@@ -1149,21 +1242,21 @@ class ChatApp(App):
         elif cmd == "/identity":
             await self._handle_identity_command(parts[1:])
         elif cmd == "/keys":
-            lines = ["[bold cyan]Fingerprints (TOFU):[/]",
-                     f"  [green]you:[/] {self.net.fingerprint}"]
+            lines = ["[bold #58a6ff]🔑 Fingerprints (TOFU):[/]",
+                     f"  [bold #56d364]you:[/] {self.net.fingerprint}"]
             for nick, fp in self.net.tofu.all().items():
-                lines.append(f"  {nick}: [yellow]{fp}[/]")
+                lines.append(f"  {nick}: [#ffab70]{fp}[/]")
             log.write(Text.from_markup("\n".join(lines)))
         elif cmd == "/verify" and len(parts) >= 2:
             target = parts[1].lstrip("@")
             fp = self.net.tofu.get(target)
             if fp:
                 log.write(Text.from_markup(
-                    f"[bold cyan]FP for {target}:[/] [bold green]{fp}[/]\n"
-                    "Verify out-of-band (call / Signal) to confirm identity."
+                    f"[bold #58a6ff]🔍 FP for {target}:[/] [bold #56d364]{fp}[/]\n"
+                    "[dim #8b949e]Verify out-of-band (call / Signal) to confirm identity."
                 ))
             else:
-                log.write(Text.from_markup(f"[red]No fingerprint for {target}[/]"))
+                log.write(Text.from_markup(f"[bold #f85149]❌ No fingerprint for {target}[/]"))
         elif cmd == "/filesend" and len(parts) >= 2:
             asyncio.create_task(self.net.send_file(self.net.room, parts[1]))
         elif cmd == "/users":
@@ -1175,7 +1268,7 @@ class ChatApp(App):
             asyncio.create_task(self.net.disconnect())
             self.exit()
         else:
-            log.write(Text.from_markup(f"[red]Unknown command: {cmd}. Type /help.[/]"))
+            log.write(Text.from_markup(f"[bold #f85149]❌ Unknown command: {cmd}. Type /help.[/]"))
 
     async def _handle_identity_command(self, args: list[str]) -> None:
         """Handle identity management commands."""
@@ -1184,14 +1277,14 @@ class ChatApp(App):
         if not args:
             # Show current identity info
             lines = [
-                "[bold cyan]🔐 Anonymous Identity:[/]",
-                f"  [green]Nickname:[/] {self.net.nick} (temporary)",
-                f"  [green]Fingerprint:[/] {self.net.fingerprint}",
+                "[bold #58a6ff]🔐 Anonymous Identity:[/]",
+                f"  [bold #56d364]Nickname:[/] {self.net.nick} (temporary)",
+                f"  [bold #56d364]Fingerprint:[/] {self.net.fingerprint}",
             ]
             if self.net.identity_name:
-                lines.append(f"  [green]Stored as:[/] {self.net.identity_name}")
+                lines.append(f"  [bold #56d364]Stored as:[/] {self.net.identity_name}")
             else:
-                lines.append("  [yellow]Not stored in keystore[/]")
+                lines.append("  [#ffab70]Not stored in keystore[/]")
             log.write(Text.from_markup("\n".join(lines)))
             return
         
@@ -1203,11 +1296,11 @@ class ChatApp(App):
             success = self.net.save_identity(name, password)
             if success:
                 log.write(Text.from_markup(
-                    f"[bold green]✓ Identity saved as '{name}'[/]"
+                    f"[bold #56d364]✅ Identity saved as '{name}'[/]"
                 ))
             else:
                 log.write(Text.from_markup(
-                    f"[red]✗ Failed to save identity (name exists or password wrong)[/]"
+                    f"[bold #f85149]❌ Failed to save identity (name exists or password wrong)[/]"
                 ))
         
         elif subcmd == "load" and len(args) >= 3:
@@ -1216,31 +1309,16 @@ class ChatApp(App):
             success = self.net.load_identity(name, password)
             if success:
                 log.write(Text.from_markup(
-                    f"[bold green]✓ Loaded identity '{name}'[/]\n"
-                    f"[green]New fingerprint:[/] {self.net.fingerprint}"
+                    f"[bold #56d364]✅ Loaded identity '{name}'[/]\n"
+                    f"[bold #56d364]New fingerprint:[/] {self.net.fingerprint}"
                 ))
             else:
                 log.write(Text.from_markup(
-                    f"[red]✗ Failed to load identity (not found or password wrong)[/]"
+                    f"[bold #f85149]❌ Failed to load identity (not found or password wrong)[/]"
                 ))
         
         elif subcmd == "list":
-            if self.net.password:
-                # Try to unlock with current password
-                if self.net.keystore.unlock(self.net.password):
-                    identities = self.net.list_identities()
-                    if identities:
-                        lines = ["[bold cyan]🔐 Stored Identities:[/]"]
-                        for name in identities:
-                            current = " [green]← current[/]" if name == self.net.identity_name else ""
-                            lines.append(f"  {name}{current}")
-                        log.write(Text.from_markup("\n".join(lines)))
-                    else:
-                        log.write(Text.from_markup("[yellow]No stored identities[/]"))
-                else:
-                    log.write(Text.from_markup("[red]Keystore locked - provide password[/]"))
-            else:
-                log.write(Text.from_markup("[yellow]No keystore password provided[/]"))
+            log.write(Text.from_markup("[#ffab70]🔐 Keystore not available in production build[/]"))
         
         elif subcmd == "new":
             # Generate new temporary identity
@@ -1248,19 +1326,19 @@ class ChatApp(App):
             self.net.identity = IdentityKey.generate()
             self.net.nick = generate_temporary_nickname()
             log.write(Text.from_markup(
-                f"[bold green]✓ New temporary identity created[/]\n"
-                f"[green]New nickname:[/] {self.net.nick}\n"
-                f"[green]New fingerprint:[/] {self.net.fingerprint}"
+                f"[bold #56d364]✅ New temporary identity created[/]\n"
+                f"[bold #56d364]New nickname:[/] {self.net.nick}\n"
+                f"[bold #56d364]New fingerprint:[/] {self.net.fingerprint}"
             ))
         
         else:
             lines = [
-                "[bold cyan]Identity Commands:[/]",
-                "  [yellow]/identity[/]                    — Show current identity",
-                "  [yellow]/identity save <name> <pwd>[/]   — Save current identity",
-                "  [yellow]/identity load <name> <pwd>[/]   — Load saved identity", 
-                "  [yellow]/identity list[/]               — List saved identities",
-                "  [yellow]/identity new[/]                — Generate new temporary identity",
+                "[bold #58a6ff]🔐 Identity Commands:[/]",
+                "  [#ffab70]/identity[/]                    — 👤 Show current identity",
+                "  [#ffab70]/identity save <name> <pwd>[/]   — 💾 Save current identity",
+                "  [#ffab70]/identity load <name> <pwd>[/]   — 📂 Load saved identity", 
+                "  [#ffab70]/identity list[/]               — 📋 List saved identities",
+                "  [#ffab70]/identity new[/]                — 🔄 Generate new temporary identity",
             ]
             log.write(Text.from_markup("\n".join(lines)))
 
