@@ -309,7 +309,14 @@ class ChatNetworkClient:
         self.identity_name = identity_name
         self.password = password
         
-        # Initialize group chat manager for proper E2E
+        # Initialize identity
+        self.identity = self._load_or_create_identity()
+        self.session  = SessionKey.generate()
+        
+        # Generate temporary nickname (anonymous)
+        self.nick = generate_temporary_nickname()
+        
+        # Initialize group chat manager for proper E2E (after nick is set)
         self._group_manager = create_group_manager(self.nick, self.identity)
         print("🔒 Signal Sender Keys enabled for secure group chat")
         
@@ -319,13 +326,6 @@ class ChatNetworkClient:
             self.pq_mode = False  # Disable PQ for performance
         else:
             self.pq_mode = False
-        
-        # Initialize identity
-        self.identity = self._load_or_create_identity()
-        self.session  = SessionKey.generate()
-        
-        # Generate temporary nickname (anonymous)
-        self.nick = generate_temporary_nickname()
         
         self.tofu     = TOFUStore()
         self.tls_store = TLSCertStore()  # TLS certificate fingerprinting

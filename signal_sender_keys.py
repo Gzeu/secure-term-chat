@@ -15,6 +15,7 @@ import secrets
 import time
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass
+from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
@@ -239,8 +240,17 @@ if __name__ == "__main__":
     bob_group = create_group_manager("bob", bob_identity)
     
     # Add each other as group members
-    alice_group.add_group_member("bob", bob_identity.public_key.hex())
-    bob_group.add_group_member("alice", alice_identity.public_key.hex())
+    bob_pub_hex = bob_identity.public_key.public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw
+    ).hex()
+    alice_pub_hex = alice_identity.public_key.public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw
+    ).hex()
+    
+    alice_group.add_group_member("bob", bob_pub_hex)
+    bob_group.add_group_member("alice", alice_pub_hex)
     
     # Exchange sender keys
     alice_distribution = alice_group.distribute_sender_key()
