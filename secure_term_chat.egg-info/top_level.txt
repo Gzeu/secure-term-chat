@@ -1,4 +1,0 @@
-client
-keystore
-server
-utils

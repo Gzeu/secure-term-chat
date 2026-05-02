@@ -584,9 +584,9 @@ class ChatNetworkClient:
     async def _handle_frame(self, raw: bytes) -> None:
         try:
             frame = parse_frame(raw)
-            print(f"[DEBUG] Received frame type: {frame['type_id']}")
+            # Frame received: {frame['type_id']}
         except ValueError as e:
-            print(f"[DEBUG] Frame parse error: {e}")
+            # Frame parse error: {e}
             return
         t = frame["type_id"]
         if t == MessageType.ROOM_CHAT:
@@ -594,16 +594,16 @@ class ChatNetworkClient:
         elif t == MessageType.ROOM_PM:
             await self._on_pm(frame)
         elif t == MessageType.HELLO_ACK:
-            print(f"[DEBUG] Processing HELLO_ACK")
+            # Processing HELLO_ACK
             await self._on_event(frame)
         elif t == MessageType.USER_LIST:
-            print(f"[DEBUG] Processing USER_LIST")
+            # Processing USER_LIST
             await self._on_user_list(frame)
         elif t == MessageType.KEY_EXCHANGE:
             await self._on_key_exchange(frame)
         elif t == MessageType.ROOM_KEY:
             # SECURITY: Disable room key processing from server
-            print(f"[DEBUG] ROOM_KEY received from server - IGNORED for security")
+            # ROOM_KEY received from server - IGNORED for security
             await self._msg_queue.put({"type": "system", "msg": "⚠️ Server room key distribution disabled for security"})
             return
         elif t == MessageType.FILE_CHUNK:
@@ -692,9 +692,9 @@ class ChatNetworkClient:
             # Check if we're the first member and should generate room key
             if event == "roster" and self._room_key is None:
                 member_count = len(members)
-                print(f"[DEBUG] Roster event: {member_count} members")
+                # Roster event: {member_count} members
                 if member_count == 0:  # We're the only one so far
-                    print(f"[DEBUG] We're first member, should generate room key")
+                    # We're first member, should generate room key
                     # Wait a bit to see if we receive a room key from server
                     await asyncio.sleep(0.5)
                     if self._room_key is None:
@@ -711,12 +711,12 @@ class ChatNetworkClient:
     async def _on_user_list(self, frame: dict) -> None:
         try:
             info = decode_json_payload(frame["payload"])
-            print(f"[DEBUG] User list payload: {info}")
+            # User list payload: {info}
         except Exception as e:
-            print(f"[DEBUG] User list parse error: {e}")
+            # User list parse error: {e}
             return
         if info.get("event") in ("roster", "join"):
-            print(f"[DEBUG] Calling _on_event for {info.get('event')}")
+            # Calling _on_event for {info.get('event')}
             await self._on_event(frame)
             return
         members = info.get("members", [])
@@ -743,19 +743,19 @@ class ChatNetworkClient:
 
     async def _on_room_key(self, frame: dict) -> None:
         """Handle room key distribution."""
-        print(f"[DEBUG] Room key handler called!")
+        # Room key handler called!
         try:
             info = decode_json_payload(frame["payload"])
             room = info["room"]
             sender = info.get("from", "server")
             encrypted_key_hex = info["encrypted_key"]
-            print(f"[DEBUG] Room key payload: room={room}, sender={sender}")
+            # Room key payload: room={room}, sender={sender}
         except Exception as e:
-            print(f"[DEBUG] Room key parse error: {e}")
+            # Room key parse error: {e}
             return
         
         if room != self.room:
-            print(f"[DEBUG] Room key for wrong room: {room} != {self.room}")
+            # Room key for wrong room: {room} != {self.room}
             return
         
         if sender == "server" and self._room_key is None:
@@ -763,18 +763,18 @@ class ChatNetworkClient:
             await self._msg_queue.put({"type": "system", "msg": f"Receiving room key for #{room}..."})
             # Use the same room key derivation method as sender
             room_seed = bytes.fromhex(encrypted_key_hex)
-            print(f"[DEBUG] Bob received room_seed: {room_seed.hex()}")
+            # Bob received room_seed: {room_seed.hex()}
             self._room_key, _ = derive_room_key(room_seed, room.encode())
-            print(f"[DEBUG] Bob derived key: {bytes(self._room_key)[:8].hex()}")
+            # Bob derived key: {bytes(self._room_key)[:8].hex()}
             await self._msg_queue.put({"type": "system", "msg": f"Room key received! Ready to chat in #{room}"})
-            print(f"[DEBUG] Room key set from server! Key: {bytes(self._room_key)[:8].hex()}")
+            # Room key set from server! Key: {bytes(self._room_key)[:8].hex()}
         elif sender != "server" and self._room_key is None:
             # Room key from another peer (first client distributing)
             await self._msg_queue.put({"type": "system", "msg": f"Room key from {sender} for #{room}"})
             room_seed = bytes.fromhex(encrypted_key_hex)
             self._room_key, _ = derive_room_key(room_seed, room.encode())
             await self._msg_queue.put({"type": "system", "msg": f"Room key received! Ready to chat in #{room}"})
-            print(f"[DEBUG] Room key set from {sender}!")
+            # Room key set from {sender}!
 
     async def _maybe_generate_room_key(self, room: str) -> None:
         """

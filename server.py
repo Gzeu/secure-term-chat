@@ -22,6 +22,10 @@ from utils import (
     decode_json_payload, IdentityKey, verify_external,
     fingerprint_from_bytes, AntiReplayFilter, sanitize_nick,
 )
+from performance_optimizations import (
+    FRAME_POOL, SSL_POOL, BROADCASTER, PERF_MONITOR,
+    BatchSender, MessageCompressor
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -69,6 +73,11 @@ class Peer:
     rate_limiter: RateLimiter = field(default_factory=RateLimiter)
     replay_filter: AntiReplayFilter = field(default_factory=AntiReplayFilter)
     addr: str = ""
+    batch_sender: Optional[BatchSender] = field(default=None, init=False)
+
+    def __post_init__(self):
+        # Initialize batch sender for this peer
+        self.batch_sender = BatchSender(self.writer)
 
     @property
     def fingerprint(self) -> str:
@@ -440,13 +449,8 @@ class ChatServer:
         await peer.queue.put(resp)
 
     async def _broadcast_room(self, room: str, frame: bytes, exclude: str = "") -> None:
-        for nick in list(self._rooms.get(room, set())):
-            if nick == exclude or nick not in self._peers:
-                continue
-            try:
-                self._peers[nick].queue.put_nowait(frame)
-            except asyncio.QueueFull:
-                log.warning(f"Queue full for {nick}")
+        """Optimized broadcast using asyncio.gather for concurrent sends"""
+        await BROADCASTER.broadcast_to_room(self._peers, self._rooms.get(room, set()), frame, exclude)
 
     async def _writer_loop(self, peer: Peer) -> None:
         while True:
@@ -482,7 +486,10 @@ class ChatServer:
 
     @staticmethod
     async def _send_raw(writer: asyncio.StreamWriter, data: bytes) -> None:
-        writer.write(data)
+        """Send raw data with optional compression"""
+        # Apply compression for large frames
+        compressed_data = MessageCompressor.compress(data)
+        writer.write(compressed_data)
         await writer.drain()
 
 
@@ -501,9 +508,8 @@ async def main():
     srv    = ChatServer(use_tls=args.tls, pq_mode=args.pq_mode)
     
     if args.tls:
-        # Create SSL context for TLS server
-        ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-        ssl_context.load_cert_chain(TLS_CERT_FILE, TLS_KEY_FILE)
+        # Use SSL context pool for better performance
+        ssl_context = SSL_POOL.get_context(TLS_CERT_FILE, TLS_KEY_FILE)
         ssl_context.check_hostname = False
         ssl_context.verify_mode = ssl.CERT_NONE  # Clients verify via fingerprinting
         
@@ -524,6 +530,16 @@ async def main():
     log.info(f"Listening on {addrs}")
     log.info(f"Server FP: {srv._server_identity.fingerprint()}")
     log.info("RAM-only mode: no persistence, no message content logged.")
+    log.info("🚀 Performance optimizations enabled: Frame Pooling, Message Batching, SSL Pooling, Compression")
+    
+    # Start performance monitoring task
+    async def performance_monitor():
+        while True:
+            await asyncio.sleep(60)  # Report every minute
+            log.info(PERF_MONITOR.get_report())
+    
+    asyncio.create_task(performance_monitor())
+    
     async with server:
         await server.serve_forever()
 
