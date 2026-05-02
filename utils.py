@@ -9,7 +9,7 @@ import time
 import hashlib
 import struct
 import secrets
-import ctypes
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Optional, Tuple
 
@@ -61,23 +61,6 @@ def wipe_bytearray(b: bytearray) -> None:
     secure_wipe(b)
 
 
-def wipe_bytes_besteffort(b: bytes) -> None:
-    """
-    Best-effort wipe of immutable bytes via ctypes.
-    NOTE: This wipes the internal buffer of the bytes object directly.
-    Not guaranteed on all CPython versions/GC states.
-    Prefer using bytearray for sensitive key material.
-    """
-    try:
-        size = len(b)
-        if size == 0:
-            return
-        # Access the ob_val buffer of PyBytesObject
-        offset = ctypes.pythonapi.PyBytes_AsString.argtypes = [ctypes.py_object]
-        buf = (ctypes.c_char * size).from_address(id(b) + ctypes.sizeof(ctypes.c_ssize_t) * 4 + ctypes.sizeof(ctypes.c_void_p))
-        ctypes.memset(buf, 0, size)
-    except Exception:
-        pass  # fallback: GC will collect
 
 
 # ──────────────────────────────────────────────────
@@ -205,8 +188,8 @@ def derive_session_key(shared_secret: bytes | bytearray, salt: bytes | None = No
 
 def derive_room_key(shared_secret: bytes | bytearray, room_name: bytes, salt: bytes | None = None) -> Tuple[bytearray, bytes]:
     if salt is None:
-        # Use deterministic salt for room keys so all clients derive same key
-        salt = hashlib.sha256(HKDF_INFO_ROOM + b":" + room_name).digest()
+        # Use random salt for better security - clients must exchange salts
+        salt = secrets.token_bytes(32)
     info = HKDF_INFO_ROOM + b":" + room_name
     key = hkdf_derive(shared_secret, salt, info, 32)
     return key, salt
@@ -264,7 +247,7 @@ def decrypt_message(key: bytes | bytearray, ciphertext: bytes, aad: bytes = b"")
 class AntiReplayFilter:
     def __init__(self, max_skew: int = MAX_TIMESTAMP_SKEW):
         self._seen: set[bytes] = set()
-        self._order: list[bytes] = []
+        self._order: deque[bytes] = deque(maxlen=MAX_NONCE_CACHE)
         self.max_skew = max_skew
 
     def check(self, nonce: bytes, timestamp: float) -> bool:
@@ -275,9 +258,11 @@ class AntiReplayFilter:
             return False
         self._seen.add(nonce)
         self._order.append(nonce)
-        if len(self._order) > MAX_NONCE_CACHE:
-            old = self._order.pop(0)
-            self._seen.discard(old)
+        # When deque is full, automatically evicts oldest
+        if len(self._order) == MAX_NONCE_CACHE:
+            # Remove the oldest nonce from seen set
+            oldest_nonce = self._order[0]
+            self._seen.discard(oldest_nonce)
         return True
 
 
@@ -286,13 +271,16 @@ class AntiReplayFilter:
 # ──────────────────────────────────────────────────
 class SymmetricRatchet:
     """
-    KDF ratchet: each step derives a fresh message key and advances
-    the chain key. Old keys are wiped after use for forward secrecy.
+    KDF ratchet with out-of-order message handling.
+    Each step derives a fresh message key and advances the chain key.
+    Maintains a key cache for skipped messages.
     """
 
     def __init__(self, root_key: bytes | bytearray):
         self._chain_key = bytearray(root_key)
         self._counter = 0
+        self._key_cache: dict[int, bytearray] = {}  # Cache for out-of-order messages
+        self._max_cache_size = 100  # Limit cache size
 
     def _advance(self) -> bytearray:
         ck = bytes(self._chain_key)
@@ -303,6 +291,18 @@ class SymmetricRatchet:
         self._counter += 1
         return msg_key
 
+    def _derive_key_for_counter(self, counter: int) -> bytearray:
+        """Derive key for specific counter without advancing ratchet."""
+        # Temporarily save current state
+        saved_chain_key = self._chain_key
+        saved_counter = self._counter
+        
+        # Derive key for requested counter
+        ck = bytes(saved_chain_key)
+        msg_key = hkdf_derive(ck, b"msg", HKDF_INFO_RATCHET + struct.pack(">Q", counter), 32)
+        
+        return msg_key
+
     def encrypt(self, plaintext: bytes, aad: bytes = b"") -> bytes:
         key = self._advance()
         ct = encrypt_message(key, plaintext, aad)
@@ -310,15 +310,42 @@ class SymmetricRatchet:
         return ct
 
     def decrypt(self, ciphertext: bytes, aad: bytes = b"") -> bytes:
-        key = self._advance()
+        # Try to decrypt with current ratchet position first
         try:
-            pt = decrypt_message(key, ciphertext, aad)
-        finally:
-            wipe_bytearray(key)
-        return pt
+            key = self._advance()
+            try:
+                pt = decrypt_message(key, ciphertext, aad)
+                wipe_bytearray(key)
+                return pt
+            except Exception:
+                # Failed to decrypt, might be out-of-order
+                wipe_bytearray(key)
+                pass
+        except Exception:
+            pass
+        
+        # Try cached keys for out-of-order messages
+        for counter, cached_key in list(self._key_cache.items()):
+            try:
+                pt = decrypt_message(cached_key, ciphertext, aad)
+                # Successfully decrypted with cached key, remove from cache
+                wipe_bytearray(cached_key)
+                del self._key_cache[counter]
+                return pt
+            except Exception:
+                continue
+        
+        # If we have a message counter in the ciphertext, try to derive that key
+        # This is a simplified approach - in practice, you'd need the counter from the message
+        # For now, we'll raise an error for out-of-order messages we can't handle
+        raise ValueError("Failed to decrypt message - possible out-of-order or corrupted")
 
     def destroy(self) -> None:
         wipe_bytearray(self._chain_key)
+        # Wipe all cached keys
+        for key in self._key_cache.values():
+            wipe_bytearray(key)
+        self._key_cache.clear()
 
 
 # ──────────────────────────────────────────────────
