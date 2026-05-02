@@ -119,9 +119,9 @@ def generate_tls_certificates():
     ).serial_number(
         x509.random_serial_number()
     ).not_valid_before(
-        datetime.datetime.utcnow()
+        datetime.datetime.now(datetime.timezone.utc)
     ).not_valid_after(
-        datetime.datetime.utcnow() + datetime.timedelta(days=365)
+        datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=365)
     ).add_extension(
         x509.SubjectAlternativeName([
             x509.DNSName("localhost"),
@@ -160,9 +160,8 @@ class ChatServer:
             self._hybrid_engine = None
             if pq_mode:
                 log.warning("⚠️  PQ mode requested but hybrid crypto not available")
-        # Room key distribution for peer-to-peer encryption
-        self._room_keys: Dict[str, str] = {}  # room -> encrypted room_key (hex)
-        # Server distributes room keys for functional group chat
+        # True zero-knowledge relay - server never stores room keys
+        # Room keys are exchanged directly between peers
         self._use_tls = use_tls
         self._server_identity = IdentityKey.generate()
         log.info(f"Server fingerprint: {self._server_identity.fingerprint()}")
@@ -235,7 +234,15 @@ class ChatServer:
             return None
 
         if nick in self._peers:
-            nick = nick + "_" + secrets.token_hex(3)
+            # Reject connection with nick collision - let client choose different nick
+            log.warning(f"Nick collision: {nick} already connected")
+            error_payload = encode_json_payload({
+                "error": "nick_collision",
+                "message": f"Nick '{nick}' is already in use. Please choose a different nick."
+            })
+            error_frame = build_frame(MessageType.ERROR, error_payload, self._server_identity)
+            await self._send_raw(writer, error_frame)
+            return None
 
         peer = Peer(
             nick=nick,
@@ -326,22 +333,12 @@ class ChatServer:
         notify_frame = build_frame(MessageType.HELLO_ACK, notify, self._server_identity)
         await self._broadcast_room(room, notify_frame, exclude=peer.nick)
 
-        # Handle room key distribution
-        if room in self._room_keys:
-            # Send existing room key to new member
-            room_key_payload = encode_json_payload({
-                "room": room,
-                "from": "server",
-                "encrypted_key": self._room_keys[room]
-            })
-            room_key_frame = build_frame(MessageType.ROOM_KEY, room_key_payload, self._server_identity)
-            await peer.queue.put(room_key_frame)
-            log.info(f"Sent room key to {peer.nick} for #{room}")
-        elif len(self._rooms[room]) == 1:
+        # True zero-knowledge relay - server never stores room keys
+        if len(self._rooms[room]) == 1:
             # First member - they will generate and distribute room key
             log.info(f"{peer.nick} is first member of #{room} - will generate room key")
         else:
-            # Room exists but no key stored - request key from existing member
+            # Room exists - request room key from existing member (no storage)
             for nick in self._rooms[room]:
                 if nick != peer.nick and nick in self._peers:
                     # Request room key from existing member
@@ -351,6 +348,7 @@ class ChatServer:
                     })
                     request_frame = build_frame(MessageType.ROOM_KEY, request_payload, self._server_identity)
                     await self._peers[nick].queue.put(request_frame)
+                    log.info(f"Requested room key for #{room} from existing member")
                     break
 
         members = [
@@ -410,23 +408,45 @@ class ChatServer:
         try:
             info = decode_json_payload(frame["payload"])
             room = info.get("room", "")
+            filename = info.get("filename", "file")
+            chunk_id = info.get("chunk_id", 0)
+            total = info.get("total", 1)
+            ct = info.get("ct", "")
         except Exception:
             return
+        
+        # Security: Validate file chunk parameters to prevent abuse
         if room not in peer.rooms:
             return
+        
+        # Limit file size to prevent abuse (max 100MB, 1000 chunks)
+        if total > 1000 or chunk_id >= total or chunk_id < 0:
+            log.warning(f"Invalid file chunk from {peer.nick}: chunk_id={chunk_id}, total={total}")
+            return
+        
+        # Limit filename length
+        if len(filename) > 255:
+            log.warning(f"Invalid filename from {peer.nick}: {filename[:50]}...")
+            return
+        
+        # Limit ciphertext size (should be reasonable for 64KB chunks)
+        if len(ct) > 100 * 1024:  # 100KB max chunk size
+            log.warning(f"Oversized file chunk from {peer.nick}: {len(ct)} bytes")
+            return
+        
         relay = encode_json_payload({
             "from":     peer.nick,
             "room":     room,
-            "filename": info.get("filename", "file"),
-            "chunk_id": info.get("chunk_id", 0),
-            "total":    info.get("total", 1),
-            "ct":       info.get("ct", ""),
+            "filename": filename,
+            "chunk_id": chunk_id,
+            "total":    total,
+            "ct":       ct,
         })
         relay_frame = build_frame(MessageType.FILE_CHUNK, relay, self._server_identity)
         await self._broadcast_room(room, relay_frame, exclude=peer.nick)
 
     async def _handle_room_key(self, peer: Peer, frame: dict) -> None:
-        """Handle room key distribution between peers."""
+        """Handle room key distribution between peers - true P2P, server never stores keys."""
         try:
             info = decode_json_payload(frame["payload"])
             room = info.get("room", "")
@@ -438,12 +458,12 @@ class ChatServer:
         if not room:
             return
         
-        # Store room key if provided
+        # Server never stores room keys - true zero-knowledge relay
+        # Only forward key exchange messages between peers
+        
+        # Distribute room key to other members in room (no storage)
         if encrypted_key and not requester:
-            self._room_keys[room] = encrypted_key
-            log.info(f"Stored room key for #{room} from {peer.nick}")
-            
-            # Distribute to other members in room
+            log.info(f"Forwarding room key for #{room} from {peer.nick}")
             for nick in self._rooms[room]:
                 if nick != peer.nick and nick in self._peers:
                     room_key_payload = encode_json_payload({
@@ -455,16 +475,18 @@ class ChatServer:
                     await self._peers[nick].queue.put(room_key_frame)
             return
         
-        # Forward room key to requester
-        if requester and requester in self._peers and room in self._room_keys:
-            room_key_payload = encode_json_payload({
-                "room": room,
-                "from": peer.nick,
-                "encrypted_key": self._room_keys[room]
-            })
-            room_key_frame = build_frame(MessageType.ROOM_KEY, room_key_payload, self._server_identity)
-            await self._peers[requester].queue.put(room_key_frame)
-            log.info(f"Forwarded room key for #{room} to {requester}")
+        # Forward room key request to existing members (no storage)
+        if requester and room in self._rooms:
+            log.info(f"Forwarding room key request for #{room} to existing members")
+            for nick in self._rooms[room]:
+                if nick != peer.nick and nick != requester and nick in self._peers:
+                    request_payload = encode_json_payload({
+                        "room": room,
+                        "requester": requester
+                    })
+                    request_frame = build_frame(MessageType.ROOM_KEY, request_payload, self._server_identity)
+                    await self._peers[nick].queue.put(request_frame)
+            return
 
     async def _handle_room_list(self, peer: Peer, frame: dict) -> None:
         """Handle room list request from client."""
@@ -521,14 +543,20 @@ class ChatServer:
         self._peers.pop(peer.nick, None)
         for room in peer.rooms:
             self._rooms[room].discard(peer.nick)
-            notify = encode_json_payload({"event": "leave", "nick": peer.nick, "room": room})
-            frame  = build_frame(MessageType.HELLO_ACK, notify, self._server_identity)
-            await self._broadcast_room(room, frame)
+            # Clean up empty rooms to prevent memory leak
+            if not self._rooms[room]:
+                del self._rooms[room]
+                log.info(f"Cleaned up empty room: #{room}")
+            else:
+                notify = encode_json_payload({"event": "leave", "nick": peer.nick, "room": room})
+                frame  = build_frame(MessageType.HELLO_ACK, notify, self._server_identity)
+                await self._broadcast_room(room, frame)
 
     @staticmethod
     async def _read_frame(reader: asyncio.StreamReader) -> bytes:
         len_bytes = await reader.readexactly(4)
         total = struct.unpack(">I", len_bytes)[0]
+        # Security: Check frame size BEFORE allocating memory
         if total > MAX_FRAME_SIZE:
             raise ValueError(f"Frame too large: {total}")
         body = await reader.readexactly(total)
@@ -559,7 +587,7 @@ async def main():
         # Use SSL context pool for better performance
         ssl_context = SSL_POOL.get_context(TLS_CERT_FILE, TLS_KEY_FILE)
         ssl_context.check_hostname = False
-        ssl_context.verify_mode = ssl.CERT_NONE  # Clients verify via fingerprinting
+        ssl_context.verify_mode = ssl.CERT_OPTIONAL  # More secure than CERT_NONE, clients verify via fingerprinting
         
         server = await asyncio.start_server(
             srv.handle_client, args.host, args.port,
