@@ -887,7 +887,7 @@ class ChatNetworkClient:
 class ChatApp(App):
     CSS = """
     Screen { 
-        background: linear-gradient(135deg, #1a1a2e 0%, #0f0f23 50%, #16213e 100%);
+        background: #1a1a2e;
         text-style: bold;
     }
     
@@ -897,9 +897,7 @@ class ChatApp(App):
         padding: 0 1; 
         background: rgba(26, 26, 46, 0.8);
         scrollbar-background: rgba(58, 63, 92, 0.5);
-        scrollbar-thumb: #58a6ff;
-        scrollbar-thumb-hover: #79c0ff;
-        scrollbar-thumb-active: #91cbff;
+        scrollbar-color: #58a6ff;
     }
     
     #side-panel { 
@@ -907,7 +905,6 @@ class ChatApp(App):
         border: solid #3a3f5c; 
         padding: 0 1; 
         background: rgba(22, 33, 62, 0.9);
-        box-shadow: inset 0 0 20px rgba(88, 166, 255, 0.1);
     }
     
     #status-bar { 
@@ -925,12 +922,10 @@ class ChatApp(App):
         border: solid #58a6ff; 
         background: rgba(26, 26, 46, 0.9);
         text-style: bold;
-        box-shadow: 0 0 10px rgba(88, 166, 255, 0.3);
     }
     
     #input-box:focus {
         border: solid #79c0ff;
-        box-shadow: 0 0 15px rgba(121, 192, 255, 0.5);
     }
     
     #progress-container { 
@@ -960,7 +955,6 @@ class ChatApp(App):
     
     .chat-message {
         color: #e2e8f0;
-        text-style: normal;
     }
     
     .system-message {
