@@ -1,50 +1,44 @@
-# 🔐 secure-term-chat
+# secure-term-chat
 
-> **World's First Post-Quantum Terminal Chat with Hybrid Cryptography**
-> 
-> 🚀 **Post-Quantum Ready**: X25519 + ML-KEM-768 + Double Ratchet
-> 
-> 🔒 **Ultra-Secure**: TLS 1.3 + Hybrid E2E + Quantum-Resistant
-> 
-> 👥 **Anonymous**: Temporary nicknames, optional persistent identity
+> Anonymous E2EE encrypted terminal chat with Post-Quantum cryptography support
+
+> Cryptographic stack: X25519 + ML-KEM-768 + Double Ratchet + TLS 1.3
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)](https://python.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Security: Post-Quantum](https://img.shields.io/badge/security-Post--Quantum-purple)]()
 [![CI/CD](https://img.shields.io/badge/CI%2FCD-GitHub%20Actions-blue)]()
 [![Docker](https://img.shields.io/badge/Docker-ready-blue)]()
-[![Post-Quantum](https://img.shields.io/badge/Post--Quantum-Ready-green)]()
 
 ---
 
-## ✨ Features
+## Features
 
-### 🔒 Security Features
-- **� Post-Quantum Hybrid**: X25519 + ML-KEM-768 + Double Ratchet (NEW!)
-- **� Double Encryption**: TLS 1.3 + End-to-End Encryption (XChaCha20-Poly1305)
-- **🔑 Advanced Cryptography**: X25519 ECDH + Ed25519 signatures + HKDF-SHA512
-- **🛡️ Certificate Pinning**: TLS with TOFU (Trust-On-First-Use) fingerprinting
-- **🔄 Forward Secrecy**: Double Ratchet with perfect forward secrecy
-- **🎯 Quantum-Resistant**: ML-KEM-768 NIST-standardized post-quantum algorithm
-- **🔐 Identity Management**: Anonymous identities with optional keystore persistence
-- **📊 Security Score**: 9.5/10 - Post-Quantum ready for enterprise use
-- **🎛️ PQ Mode Control**: `--pq-mode` flag for quantum-resistant security
+### Security Features
+- **Post-Quantum Hybrid**: X25519 + ML-KEM-768 + Double Ratchet
+- **Double Encryption**: TLS 1.3 + End-to-End Encryption (XChaCha20-Poly1305)
+- **Advanced Cryptography**: X25519 ECDH + Ed25519 signatures + HKDF-SHA512
+- **Certificate Pinning**: TLS with TOFU (Trust-On-First-Use) fingerprinting
+- **Forward Secrecy**: Double Ratchet with perfect forward secrecy
+- **Quantum-Resistant**: ML-KEM-768 NIST-standardized post-quantum algorithm
+- **Identity Management**: Anonymous identities with optional keystore persistence
+- **PQ Mode Control**: `--pq-mode` flag for quantum-resistant security
 
-### 💬 Chat Features
-- **👥 Multi-User Chat**: Real-time encrypted messaging in rooms
-- **🏠 Room Management**: Create and join encrypted chat rooms with user counts
-- **📁 Secure File Transfer**: Encrypted file sharing with real-time progress tracking
-- **👤 User Lists**: Live user presence and room member information
-- **🎨 Modern UI**: Clean terminal interface with side panels and rich formatting
-- **📱 Responsive Design**: Auto-focus input, dynamic progress bars, clean layout
-- **🔍 Command System**: Intuitive commands for room management and user interaction
+### Chat Features
+- **Multi-User Chat**: Real-time encrypted messaging in rooms
+- **Room Management**: Create and join encrypted chat rooms with user counts
+- **Secure File Transfer**: Encrypted file sharing with real-time progress tracking
+- **User Lists**: Live user presence and room member information
+- **Modern UI**: Clean terminal interface with side panels and rich formatting
+- **Responsive Design**: Auto-focus input, dynamic progress bars, clean layout
+- **Command System**: Intuitive commands for room management and user interaction
 
-### 🛠️ Technical Features
-- **🌐 Network Security**: TLS 1.3 with automatic certificate generation
-- **💾 Memory Safety**: Secure key storage with automatic cleanup
-- **⚡ Performance**: Optimized for low-latency messaging and file transfers
-- **🔧 Developer Tools**: Comprehensive testing suite, CI/CD pipeline, Docker support
-- **📚 Documentation**: Complete security analysis and usage guides
+### Technical Features
+- **Network Security**: TLS 1.3 with automatic certificate generation
+- **Memory Safety**: Secure key storage with automatic cleanup
+- **Performance**: Optimized for low-latency messaging and file transfers
+- **Developer Tools**: Comprehensive testing suite, CI/CD pipeline, Docker support
+- **Documentation**: Complete security analysis and usage guides
 
 ---
 
