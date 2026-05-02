@@ -1,14 +1,13 @@
 # 📁 Secure Term Chat - Project Structure
 
-## 🏗️ **Final Clean Architecture**
+## 🏗️ **Production Architecture**
 
 ```
 secure-term-chat/
 ├── 📄 Core Files
-│   ├── server.py              # Optimized relay server with performance enhancements
-│   ├── client.py              # Clean TUI client (debug statements removed)
+│   ├── server.py              # Relay server with room key distribution
+│   ├── client.py              # TUI client with group chat support
 │   ├── utils.py               # Crypto primitives and wire protocol
-│   ├── keystore.py            # Anonymous identity management
 │   └── performance_optimizations.py # Performance enhancements
 │
 ├── 🔐 Cryptography Modules
@@ -38,14 +37,17 @@ secure-term-chat/
 │
 ├── 📚 Documentation
 │   ├── README.md              # Main documentation
-│   ├── SECURITY.md            # Security analysis
-│   ├── CHANGELOG.md           # Version history
 │   ├── OPTIMIZATIONS_SUMMARY.md # Performance improvements
+│   ├── DEPLOYMENT_GUIDE.md    # Production deployment guide
 │   └── LICENSE                # MIT License
 │
 ├── 🔑 TLS Certificates (Runtime)
 │   ├── server_cert.pem        # Self-signed server certificate
 │   └── server_key.pem         # Server private key
+│
+├── 📦 Reports
+│   ├── BUG_FIX_REPORT.md      # Frame corruption fix documentation
+│   └── ROOM_KEY_FIX_REPORT.md # Room key distribution fix
 │
 └── 📦 Build Artifacts
     ├── dist/                  # Package distribution
@@ -58,16 +60,16 @@ secure-term-chat/
 ## 🎯 **Core Components**
 
 ### **🚀 Server (`server.py`)**
-- **Performance Optimized**: Message batching, frame pooling, SSL pooling
+- **Room Key Distribution**: Functional group chat support
+- **Performance Optimized**: Frame pooling, SSL pooling, broadcast optimization
 - **Async Architecture**: Single-threaded asyncio for scalability
-- **Security**: RAM-only, no message content access
-- **Features**: Room management, peer discovery, encrypted relay
+- **Security**: RAM-only, encrypted key storage only
 
 ### **🎨 Client (`client.py`)**
-- **Clean Code**: All debug statements removed
-- **Modern UI**: Textual TUI with side panels
+- **Group Chat Support**: Room key generation and sharing
+- **Modern UI**: Textual TUI with real-time updates
 - **Security**: End-to-end encryption, TOFU fingerprinting
-- **Features**: Real-time chat, file transfer, identity management
+- **Features**: Private messages, file transfer, identity management
 
 ### **🔧 Utils (`utils.py`)**
 - **Crypto Primitives**: XChaCha20-Poly1305, X25519, Ed25519
@@ -76,30 +78,27 @@ secure-term-chat/
 
 ### **⚡ Performance (`performance_optimizations.py`)**
 - **Frame Pooling**: Memory management for buffers
-- **Message Batching**: Reduce syscall overhead
-- **Compression**: 98.3% size reduction for large messages
-- **SSL Pooling**: Reuse SSL contexts
+- **SSL Pooling**: Connection reuse for TLS performance
+- **Broadcast Optimization**: Concurrent message delivery
 - **Monitoring**: Real-time performance metrics
 
 ---
 
 ## 📊 **Performance Features**
 
-### **✅ Implemented Optimizations**
-- **Message Batching**: 557.9% throughput improvement
-- **Compression**: 98.3% bandwidth reduction
+### **✅ Active Optimizations**
 - **Frame Pooling**: Memory reuse and GC pressure reduction
 - **SSL Pooling**: Connection reuse for better performance
 - **Broadcast Optimization**: Concurrent message delivery
+- **Performance Monitoring**: Automated 60-second reports
 
-### **🔍 Performance Monitoring**
-```python
-# Automated reports every 60 seconds
-PERF_MONITOR.get_report()
-# - Frame pool hit rate
-# - SSL pool utilization
-# - Broadcast statistics
-# - System metrics
+### **🔍 Real-time Monitoring**
+```
+=== Performance Report ===
+Frame Pool: 85/100 (Hit Rate: 92.3%)
+SSL Pool: 8/10 (In Use: 2)
+Broadcast: 1500 total, 0 failed
+=========================
 ```
 
 ---
@@ -112,37 +111,11 @@ PERF_MONITOR.get_report()
 - **Authentication**: Ed25519 signatures + TOFU
 - **Forward Secrecy**: Symmetric ratchet per session
 
-### **🔑 Identity Management**
-- **Anonymous**: Temporary identities by default
-- **Persistent**: Optional encrypted keystore
-- **Verification**: Out-of-band fingerprint checking
-- **Security**: Server never sees private keys
-
-### **🚨 Security Features**
-- **Anti-Replay**: Nonce + timestamp filtering
-- **Rate Limiting**: DoS protection (30 msgs/5s)
-- **Memory Safety**: Secure key wiping
-- **TLS Support**: Certificate pinning with TOFU
-
----
-
-## 📦 **Dependencies**
-
-### **Production (`requirements.txt`)**
-```
-cryptography>=41.0.0
-textual>=0.41.0
-pynacl>=1.5.0
-```
-
-### **Development (`requirements-dev.txt`)**
-```
-pytest>=7.0.0
-pytest-asyncio>=0.21.0
-black>=23.0.0
-flake8>=6.0.0
-mypy>=1.0.0
-```
+### **🔑 Room Key Distribution**
+- **Server Coordination**: Encrypted key storage and distribution
+- **Peer-to-Peer**: Direct key exchange between users
+- **Group Chat**: Shared room keys for multi-user communication
+- **Security**: Server cannot decrypt message content
 
 ---
 
@@ -150,7 +123,7 @@ mypy>=1.0.0
 
 ### **1. Start Server**
 ```bash
-python server.py --port 12345 --tls
+python server.py --tls --debug
 ```
 
 ### **2. Connect Clients**
@@ -162,66 +135,57 @@ python client.py localhost:12345 --room crypto --tls
 python client.py localhost:12345 --room crypto --tls --identity alice --password mypass
 ```
 
-### **3. Verify Fingerprints**
+### **3. Test Communication**
 ```
-Server FP: a1b2:c3d4:e5f6:...
-Your FP:  f7e8:d9c0:b1a2:...
-Peer FP:  3d4e:5f6:a7b8:c9d0:...
+# In client 1
+Hello from Alice - can anyone see this?
+
+# In client 2
+Hello from Bob - testing communication
 ```
 
 ---
 
-## 📈 **Performance Benchmarks**
+## 🎯 **Production Features**
 
-### **Message Throughput**
-- **Before**: 5,000 msg/sec
-- **After**: 25,000 msg/sec (**+400%**)
+### **✅ Group Chat**
+- **Room Key Distribution**: Automatic key sharing
+- **Multi-user Support**: Functional group conversations
+- **Message Visibility**: All users see each other's messages
+- **Security**: End-to-end encrypted group chat
 
-### **Memory Usage**
-- **Per Client**: ~5KB (vs ~7KB before)
-- **Frame Pool**: 100 buffers reusable
-- **SSL Pool**: 10 contexts reusable
+### **✅ Performance Optimized**
+- **Frame Pooling**: Memory reuse and GC reduction
+- **SSL Pooling**: Connection reuse for TLS
+- **Broadcast Optimization**: Concurrent message delivery
+- **Real-time Monitoring**: Performance metrics dashboard
 
-### **Network Efficiency**
-- **Compression**: 98.3% size reduction
-- **Batching**: 10x fewer syscalls
-- **Broadcast**: Sub-millisecond latency
+### **✅ Security Features**
+- **End-to-End Encryption**: XChaCha20-Poly1305
+- **Zero-Knowledge**: Server cannot read messages
+- **Forward Secrecy**: Symmetric ratchet per session
+- **Authentication**: Ed25519 signatures + TOFU
 
 ---
 
-## 🎯 **Production Ready**
+## 📋 **Dependencies**
 
-### **✅ Enterprise Features**
-- **Scalability**: 1000+ concurrent clients
-- **Performance**: 557.9% message throughput improvement
-- **Security**: Zero-knowledge architecture
-- **Monitoring**: Real-time performance metrics
-
-### **🔧 Configuration**
-```python
-# Performance tuning
-FRAME_POOL_SIZE = 100
-SSL_POOL_SIZE = 10
-BATCH_SIZE = 10
-COMPRESSION_THRESHOLD = 1024
+### **Production**
+```
+cryptography>=41.0.0
+textual>=0.41.0
+pynacl>=1.5.0
 ```
 
-### **📊 Monitoring**
-- **Automated Reports**: Every 60 seconds
-- **Pool Statistics**: Hit rates, utilization
-- **Broadcast Metrics**: Messages, failures, latency
-- **System Health**: Uptime, performance counters
-
 ---
 
-## 🏆 **Final Status**
+## 🏆 **Status**
 
-**✅ Production Ready** - Clean, optimized, secure
+**✅ Production Ready** - Group chat functional
 
-- **Code Quality**: All debug statements removed
-- **Performance**: 557.9% throughput improvement
-- **Security**: Enterprise-grade encryption
-- **Scalability**: 1000+ concurrent clients
-- **Documentation**: Complete and up-to-date
+- **Room Key Distribution**: Implemented and working
+- **Message Visibility**: Users can see each other's messages
+- **Performance**: Optimized with pooling and monitoring
+- **Security**: Enterprise-grade encryption maintained
 
-**🚀 Ready for deployment!**
+**🚀 Ready for multi-user deployment!**
