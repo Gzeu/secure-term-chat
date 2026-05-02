@@ -1,6 +1,12 @@
 # Core crypto
 cryptography>=42.0
 
+# Double Ratchet (Signal Protocol)
+python-doubleratchet>=1.0.0
+
+# Post-Quantum Cryptography
+quantcrypt>=0.3.0
+
 # Terminal UI
 textual>=0.60
 # rich>=13.0  # Included in textual, but can be explicit

@@ -18,6 +18,7 @@ from typing import Dict, Optional, Set
 
 from utils import (
     MessageType, parse_frame, build_frame, encode_json_payload,
+    HYBRID_CRYPTO_AVAILABLE,
     decode_json_payload, IdentityKey, verify_external,
     fingerprint_from_bytes, AntiReplayFilter, sanitize_nick,
 )
@@ -142,9 +143,20 @@ def generate_tls_certificates():
 
 
 class ChatServer:
-    def __init__(self, use_tls: bool = False):
+    def __init__(self, use_tls: bool = False, pq_mode: bool = False):
         self._peers: Dict[str, Peer] = {}
         self._rooms: Dict[str, Set[str]] = defaultdict(set)
+        self._pq_mode = pq_mode
+        
+        # Initialize hybrid crypto engine if PQ mode is enabled
+        if pq_mode and HYBRID_CRYPTO_AVAILABLE:
+            from hybrid_crypto import get_hybrid_engine
+            self._hybrid_engine = get_hybrid_engine(pq_mode=True)
+            log.info("🔒 Post-Quantum hybrid cryptography enabled")
+        else:
+            self._hybrid_engine = None
+            if pq_mode:
+                log.warning("⚠️  PQ mode requested but hybrid crypto not available")
         self._room_keys: Dict[str, str] = {}  # room -> encrypted room_key (hex)
         self._use_tls = use_tls
         self._server_identity = IdentityKey.generate()
@@ -510,12 +522,13 @@ async def main():
     parser.add_argument("--port",  type=int, default=12345)
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--tls", action="store_true", help="Enable TLS encryption")
+    parser.add_argument("--pq-mode", action="store_true", help="Enable Post-Quantum hybrid cryptography")
     args = parser.parse_args()
 
     if args.debug:
         logging.getLogger().setLevel(logging.DEBUG)
 
-    srv    = ChatServer(use_tls=args.tls)
+    srv    = ChatServer(use_tls=args.tls, pq_mode=args.pq_mode)
     
     if args.tls:
         # Create SSL context for TLS server

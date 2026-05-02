@@ -33,6 +33,7 @@ from utils import (
     encrypt_file_stream, CHUNK_SIZE,
     sanitize_nick, wipe_bytearray,
     InvalidTag,
+    HYBRID_CRYPTO_AVAILABLE,
 )
 from keystore import AnonymousKeystore, generate_temporary_nickname
 
@@ -89,24 +90,59 @@ class TLSCertStore:
 
 
 # ──────────────────────────────────────────────────
-# TOFU Store (RAM-only)
+# TOFU Store (RAM-only) - Enhanced for Hybrid Crypto
 # ──────────────────────────────────────────────────
 class TOFUStore:
     def __init__(self):
-        self._store: Dict[str, str] = {}
+        self._store: Dict[str, Dict[str, str]] = {}
 
-    def check_or_trust(self, nick: str, identity_pub_hex: str) -> tuple[bool, bool]:
+    def check_or_trust_classical(self, nick: str, identity_pub_hex: str) -> tuple[bool, bool]:
+        """Classical TOFU check for Ed25519 fingerprints"""
         fp = fingerprint_from_bytes(bytes.fromhex(identity_pub_hex))
         if nick not in self._store:
-            self._store[nick] = fp
+            self._store[nick] = {"classical": fp}
             return True, True
-        return self._store[nick] == fp, False
+        stored_fp = self._store[nick].get("classical")
+        return stored_fp == fp, False
 
-    def get(self, nick: str) -> Optional[str]:
+    def check_or_trust_hybrid(self, nick: str, hybrid_fingerprint: str) -> tuple[bool, bool]:
+        """Hybrid TOFU check for fingerprints with PQ material"""
+        if nick not in self._store:
+            self._store[nick] = {"hybrid": hybrid_fingerprint}
+            return True, True
+        stored_fp = self._store[nick].get("hybrid")
+        return stored_fp == hybrid_fingerprint, False
+
+    def check_or_trust(self, nick: str, identity_pub_hex: str, hybrid_fingerprint: Optional[str] = None) -> tuple[bool, bool]:
+        """Unified TOFU check - classical or hybrid"""
+        if hybrid_fingerprint:
+            return self.check_or_trust_hybrid(nick, hybrid_fingerprint)
+        else:
+            return self.check_or_trust_classical(nick, identity_pub_hex)
+
+    def get(self, nick: str) -> Optional[Dict[str, str]]:
+        """Get stored fingerprint(s) for peer"""
         return self._store.get(nick)
+
+    def get_classical(self, nick: str) -> Optional[str]:
+        """Get classical fingerprint only"""
+        peer_data = self._store.get(nick)
+        return peer_data.get("classical") if peer_data else None
+
+    def get_hybrid(self, nick: str) -> Optional[str]:
+        """Get hybrid fingerprint only"""
+        peer_data = self._store.get(nick)
+        return peer_data.get("hybrid") if peer_data else None
 
     def all(self) -> dict:
         return dict(self._store)
+
+    def upgrade_to_hybrid(self, nick: str, hybrid_fingerprint: str) -> bool:
+        """Upgrade existing classical fingerprint to hybrid"""
+        if nick in self._store and "hybrid" not in self._store[nick]:
+            self._store[nick]["hybrid"] = hybrid_fingerprint
+            return True
+        return False
 
 
 # ──────────────────────────────────────────────────
@@ -257,17 +293,28 @@ class FileReassembler:
 # Network Client
 # ──────────────────────────────────────────────────
 class ChatNetworkClient:
-    def __init__(self, host: str, port: int, room: str, use_tls: bool = False, 
+    def __init__(self, host: str, port: int, room: str, use_tls: bool = False, pq_mode: bool = False,
                  identity_name: Optional[str] = None, password: Optional[str] = None):
         self.host = host
         self.port = port
         self.room = room
         self.use_tls = use_tls
+        self.pq_mode = pq_mode
 
         # Anonymous keystore support
         self.keystore = AnonymousKeystore()
         self.identity_name = identity_name
         self.password = password
+        
+        # Initialize hybrid crypto engine if PQ mode is enabled
+        if pq_mode and HYBRID_CRYPTO_AVAILABLE:
+            from hybrid_crypto import get_hybrid_engine
+            self._hybrid_engine = get_hybrid_engine(pq_mode=True)
+            print("🔒 Post-Quantum hybrid cryptography enabled")
+        else:
+            self._hybrid_engine = None
+            if pq_mode:
+                print("⚠️  PQ mode requested but hybrid crypto not available")
         
         # Initialize identity
         self.identity = self._load_or_create_identity()
@@ -1296,6 +1343,7 @@ Examples:
     parser.add_argument("server", help="host:port")
     parser.add_argument("--room", default="default", help="Room to join")
     parser.add_argument("--tls", action="store_true", help="Use TLS encryption for connection")
+    parser.add_argument("--pq-mode", action="store_true", help="Enable Post-Quantum hybrid cryptography")
     parser.add_argument("--identity", help="Load saved identity name")
     parser.add_argument("--password", help="Password for keystore/identity")
     args = parser.parse_args()
@@ -1308,7 +1356,7 @@ Examples:
     
     # Create client with anonymous identity
     client = ChatNetworkClient(
-        host, port, args.room, use_tls=args.tls,
+        host, port, args.room, use_tls=args.tls, pq_mode=args.pq_mode,
         identity_name=args.identity, password=args.password
     )
     ChatApp(client).run()

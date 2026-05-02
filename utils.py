@@ -23,6 +23,14 @@ from cryptography.exceptions import InvalidSignature, InvalidTag
 # PyNaCl removed - all crypto functions use cryptography library
 # This reduces dependencies from 3 to 2 packages (33% reduction)
 
+# Hybrid crypto imports (Phase 1)
+from hybrid_crypto import HYBRID_CRYPTO_AVAILABLE
+try:
+    from hybrid_crypto import HybridCryptoEngine, HybridIdentity, HybridKeyExchange
+    from double_ratchet_custom import SimpleRatchet
+except ImportError:
+    pass  # Individual components may not be available
+
 # ──────────────────────────────────────────────────
 # Constants
 # ──────────────────────────────────────────────────
@@ -340,6 +348,11 @@ class MessageType(IntEnum):
     USER_LIST    = 12
     DISCONNECT   = 13
     ROOM_KEY     = 14
+    # Hybrid crypto messages (Phase 2)
+    HYBRID_HELLO        = 15  # Hybrid handshake with PQ keys
+    HYBRID_HELLO_ACK    = 16  # Hybrid handshake response
+    HYBRID_KEY_EXCHANGE = 17  # Hybrid key exchange with PQ material
+    HYBRID_RATCHET_STEP = 18  # Double ratchet step with DH update
 
 
 def build_frame(msg_type: MessageType, payload: bytes, identity: IdentityKey) -> bytes:
