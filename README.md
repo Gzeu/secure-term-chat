@@ -67,13 +67,17 @@ pip install -e .
 
 ---
 
-## 🏗️ Architecture
+## 🔐 About
 
-**Zero-Knowledge Design**: Server relays encrypted blobs without accessing content.
+Ultra-secure encrypted terminal chat room with:
 
-**Room Key Distribution**: Server coordinates encrypted key sharing for group chat.
-
-**End-to-End Encryption**: Messages encrypted with XChaCha20-Poly1305 between participants.
+- **XChaCha20-Poly1305** - Military-grade encryption
+- **X25519 ECDH** - Secure key exchange  
+- **Ed25519** - Digital signatures
+- **Double Ratchet-inspired PFS** - Forward secrecy
+- **TOFU fingerprints** - Trust-on-first-use verification
+- **asyncio** - High-performance networking
+- **Textual TUI** - Modern terminal interface
 
 ---
 
