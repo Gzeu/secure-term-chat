@@ -252,7 +252,7 @@ class PeerSession:
         self.nick         = nick
         self.identity_pub = bytes.fromhex(identity_pub_hex)
         self.session_pub  = bytes.fromhex(session_pub_hex)
-        self.fingerprint  = fingerprint_from_bytes(self.identity_pub)
+        self._fingerprint = fingerprint_from_bytes(self.identity_pub)
         self._enc_key: Optional[bytearray] = None
         self._ratchet_send: Optional[SymmetricRatchet] = None
         self._ratchet_recv: Optional[SymmetricRatchet] = None
@@ -292,13 +292,19 @@ class PeerSession:
             raise RuntimeError("Keys not derived")
         return self._ratchet_recv.decrypt(bytes.fromhex(ct_hex))
 
-    def destroy(self):
+    def destroy(self) -> None:
+        """Destroy session keys and wipe sensitive data."""
         if self._enc_key:
             wipe_bytearray(self._enc_key)
         if self._ratchet_send:
             self._ratchet_send.destroy()
         if self._ratchet_recv:
             self._ratchet_recv.destroy()
+
+    @property
+    def fingerprint(self) -> str:
+        """Get peer fingerprint."""
+        return self._fingerprint
 
 
 # ──────────────────────────────────────────────────
@@ -414,7 +420,7 @@ class ChatNetworkClient:
         self.tofu_store = TOFUStore()
         self.identity = self._load_or_create_identity()
         self.session = SessionKey.generate()
-        self.fingerprint = self.identity.fingerprint()
+        # fingerprint is now a property, no need to store it separately
         
         # Room and peer management
         self._room_key: Optional[bytearray] = None
@@ -762,6 +768,11 @@ class ChatNetworkClient:
         # Keystore not available in production build
         return False
     
+    @property
+    def fingerprint(self) -> str:
+        """Get client fingerprint."""
+        return self.identity.fingerprint()
+    
     async def _read_frame(self) -> bytes:
         """Read a frame from the server."""
         if not self._reader:
@@ -927,10 +938,6 @@ class ChatNetworkClient:
         """Request list of available rooms from server."""
         payload = encode_json_payload({"action": "list_rooms"})
         await self._send(build_frame(MessageType.ROOM_LIST, payload, self.identity))
-
-    @property
-    def fingerprint(self) -> str:
-        return self.identity.fingerprint()
 
     # ── Connect ──────────────────────────────────────
     async def connect(self) -> bool:
