@@ -7,6 +7,14 @@ python-doubleratchet>=1.0.0
 # Post-Quantum Cryptography
 quantcrypt>=0.3.0
 
+# WebRTC P2P Support
+websockets>=12.0
+aiortc>=1.6.0
+
+# Enhanced Security Features
+bcrypt>=4.1.0  # For keystore encryption
+argon2-cffi>=23.1.0  # Alternative key derivation
+
 # Terminal UI
 textual>=0.60
 # rich>=13.0  # Included in textual, but can be explicit
