@@ -35,6 +35,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
 # Import existing client
 from client import ChatNetworkClient
 from encrypted_keystore import EncryptedKeystore, create_keystore, load_keystore, verify_keystore_password
+from p2p_manager import P2PManager, P2PState, PeerInfo, create_p2p_manager, is_p2p_available
 
 class UIState(Enum):
     CONNECTING = "connecting"
@@ -262,6 +263,8 @@ class StatusBar(Static):
     room_info = reactive("")
     connection_time = reactive(0)
     message_count = reactive(0)
+    p2p_status = reactive(P2PState.DISCONNECTED)
+    p2p_peers = reactive(0)
     
     def __init__(self):
         super().__init__()
@@ -281,20 +284,32 @@ class StatusBar(Static):
         
         # Create status table
         table = Table(show_header=False, box=None, padding=(0, 1))
-        table.add_column("", style=color, width=15)
-        table.add_column("", style="#c9d1d9", width=20)
-        table.add_column("", style="#8b949e", width=15)
-        table.add_column("", style="#8b949e", width=15)
-        table.add_column("", style="#8b949e", width=15)
+        table.add_column("", style=color, width=12)
+        table.add_column("", style="#c9d1d9", width=18)
+        table.add_column("", style="#8b949e", width=12)
+        table.add_column("", style="#8b949e", width=12)
+        table.add_column("", style="#8b949e", width=12)
+        table.add_column("", style="#8b949e", width=12)
         
         uptime = int(time.time() - self.start_time)
         uptime_str = f"{uptime//60:02d}:{uptime%60:02d}"
+        
+        # P2P status
+        p2p_config = {
+            P2PState.CONNECTING: ("🔄 P2P", "#ff79c6"),
+            P2PState.CONNECTED: ("🟢 P2P", "#56d364"),
+            P2PState.DISCONNECTED: ("⚫ P2P", "#6e7681"),
+            P2PState.FAILED: ("❌ P2P", "#f85149"),
+            P2PState.FALLBACK: ("🔄 Relay", "#ff79c6")
+        }
+        p2p_text, p2p_color = p2p_config.get(self.p2p_status, ("❓ P2P", "#6e7681"))
         
         table.add_row(
             f"[bold]{status_text}[/]",
             f"🌐 {self.server_info}" if self.server_info else "",
             f"👤 {self.user_info}" if self.user_info else "",
-            f"🏠 {self.room_info}" if self.room_info else "",
+            f"[{p2p_color}]{p2p_text} ({self.p2p_peers})[/" if self.p2p_peers > 0 else f"[{p2p_color}]{p2p_text}[/]",
+            f"📨 {self.message_count}" if self.message_count > 0 else "",
             f"⏱️ {uptime_str}"
         )
         
@@ -646,6 +661,8 @@ class ModernChatApp(App):
         self.keystore: Optional[EncryptedKeystore] = None
         self.keystore_password: Optional[str] = None
         self.keystore_dir = Path.home() / ".secure-term-chat"
+        self.p2p_manager: Optional[P2PManager] = None
+        self.p2p_enabled = is_p2p_available()
         self.chat_panel = ChatPanel()
         self.user_list = UserListPanel()
         self.status_bar = StatusBar()
@@ -786,6 +803,80 @@ class ModernChatApp(App):
             ))
             return False
     
+    async def _initialize_p2p(self, nickname: str, room: str) -> None:
+        """Initialize P2P manager"""
+        try:
+            # Generate unique peer ID
+            peer_id = f"{nickname}_{int(time.time())}_{hash(nickname) % 10000}"
+            
+            # Create P2P manager
+            self.p2p_manager = create_p2p_manager(
+                peer_id, 
+                nickname, 
+                self.net.fingerprint if self.net else "unknown",
+                room
+            )
+            
+            # Set up callbacks
+            self.p2p_manager.on_peer_connected = self._on_p2p_peer_connected
+            self.p2p_manager.on_peer_disconnected = self._on_p2p_peer_disconnected
+            self.p2p_manager.on_message_received = self._on_p2p_message_received
+            
+            # Start P2P with signaling server
+            signaling_server = "ws://localhost:8765"  # Default signaling server
+            success = await self.p2p_manager.start(signaling_server)
+            
+            if success:
+                self.status_bar.p2p_status = P2PState.CONNECTED
+                self.chat_panel.add_message(ChatMessage(
+                    "System",
+                    "🌐 P2P manager started successfully",
+                    "success"
+                ))
+            else:
+                self.status_bar.p2p_status = P2PState.FALLBACK
+                self.chat_panel.add_message(ChatMessage(
+                    "System",
+                    "🔄 P2P not available, using relay mode",
+                    "warning"
+                ))
+                
+        except Exception as e:
+            self.status_bar.p2p_status = P2PState.FAILED
+            self.chat_panel.add_message(ChatMessage(
+                "System",
+                f"❌ P2P initialization failed: {e}",
+                "error"
+            ))
+    
+    def _on_p2p_peer_connected(self, peer_id: str):
+        """Handle P2P peer connection"""
+        self.chat_panel.add_message(ChatMessage(
+            "System",
+            f"🌐 P2P connected to {peer_id}",
+            "success"
+        ))
+        self.status_bar.p2p_peers = len(self.p2p_manager.get_connected_peers())
+    
+    def _on_p2p_peer_disconnected(self, peer_id: str):
+        """Handle P2P peer disconnection"""
+        self.chat_panel.add_message(ChatMessage(
+            "System",
+            f"🌐 P2P disconnected from {peer_id}",
+            "warning"
+        ))
+        self.status_bar.p2p_peers = len(self.p2p_manager.get_connected_peers())
+    
+    def _on_p2p_message_received(self, message):
+        """Handle P2P message received"""
+        # Forward to regular message handling
+        asyncio.create_task(self.process_message({
+            "type": "chat",
+            "from": message.sender_id,
+            "msg": message.data,
+            "room": message.room
+        }))
+    
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses"""
         if event.button.id == "send-btn":
@@ -887,6 +978,16 @@ class ModernChatApp(App):
                     room=self.net.room
                 ))
                 self.status_bar.message_count += 1
+                
+                # Also send via P2P if available
+                if self.p2p_manager and self.p2p_manager.state == P2PState.CONNECTED:
+                    p2p_sent = await self.p2p_manager.broadcast_message(message_text)
+                    if p2p_sent > 0:
+                        self.chat_panel.add_message(ChatMessage(
+                            "System",
+                            f"🌐 Sent via P2P to {p2p_sent} peers",
+                            "system"
+                        ))
             
             input_box.value = ""
             
@@ -1071,6 +1172,10 @@ class ModernChatApp(App):
                 # Add current user to user list
                 self.user_list.add_user(nick, self.net.fingerprint, "online")
                 
+                # Initialize P2P if available
+                if self.p2p_enabled:
+                    await self._initialize_p2p(nick, room)
+                
                 # Start message handling
                 asyncio.create_task(self.handle_messages())
                 
@@ -1179,6 +1284,13 @@ class ModernChatApp(App):
                 "👋 Disconnected from server",
                 "system"
             ))
+        
+        # Stop P2P manager
+        if self.p2p_manager:
+            await self.p2p_manager.stop()
+            self.p2p_manager = None
+            self.status_bar.p2p_status = P2PState.DISCONNECTED
+            self.status_bar.p2p_peers = 0
             
             # Clear user list
             self.user_list.users.clear()
