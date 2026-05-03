@@ -102,7 +102,8 @@ class UserProfile:
             metadata=data.get("metadata", {})
         )
 
-@dataclass AuditLogEntry:
+@dataclass
+class AuditLogEntry:
     """Audit log entry for compliance tracking"""
     log_id: str
     timestamp: float
