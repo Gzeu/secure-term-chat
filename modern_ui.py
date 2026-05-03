@@ -576,7 +576,7 @@ class ModernChatApp(App):
                 yield Static(" #general", id="room-header")
                 yield self.chat_panel
                 with Horizontal(id="input-bar"):
-                    yield Input(placeholder="Message…  /help for commands", id="message-input")
+                    yield Input(placeholder="Type a message… Try /help, /join #room, /users, /connect localhost:12345", id="message-input")
                     yield Button("Send", variant="primary", id="send-btn")
             # Sidebar
             with Vertical(id="sidebar"):
@@ -616,8 +616,23 @@ class ModernChatApp(App):
 
         self.chat_panel.add_message(ChatMessage(
             "System",
-            "Welcome to secure-term-chat!  Ctrl+N to connect · Ctrl+H for help.",
+            "🔐 Welcome to secure-term-chat! Get started:",
             "success",
+        ))
+        self.chat_panel.add_message(ChatMessage(
+            "System",
+            "• Press Ctrl+N to connect to a server",
+            "system",
+        ))
+        self.chat_panel.add_message(ChatMessage(
+            "System", 
+            "• Try /help for all commands • /connect localhost:12345 to connect",
+            "system",
+        ))
+        self.chat_panel.add_message(ChatMessage(
+            "System",
+            "• Type messages directly or use commands like /join #room",
+            "system",
         ))
 
         self._check_keystore_status()
@@ -950,19 +965,35 @@ class ModernChatApp(App):
 
     def show_help(self) -> None:
         lines = [
-            "[bold #e6edf3]Commands[/]",
-            "[#4d5566]/connect  /disconnect  /quit[/]",
-            "[#4d5566]/nick <name>  /join <room>  /part[/]",
-            "[#4d5566]/me <action>  /rooms  /users[/]",
-            "[#4d5566]/settings  /clear  /help[/]",
+            "[bold #e6edf3]💬 Chat Commands[/]",
+            "[#4d5566]/help              — Show this help",
+            "[#4d5566]/connect <addr>    — Connect to server (e.g., localhost:12345)",
+            "[#4d5566]/disconnect        — Disconnect from server",
+            "[#4d5566]/nick <name>       — Change your nickname",
+            "[#4d5566]/join #room        — Join or create a room",
+            "[#4d5566]/part              — Leave current room",
+            "[#4d5566]/me <action>       — Send action message",
+            "[#4d5566]/rooms             — List available rooms",
+            "[#4d5566]/users             — List users in current room",
+            "[#4d5566]/quit              — Exit and wipe keys",
             "",
-            "[bold #e6edf3]Shortcuts[/]",
+            "[bold #e6edf3]⌨️  Shortcuts[/]",
             "[#4d5566]Ctrl+N  Connect       Ctrl+S  Settings[/]",
             "[#4d5566]Ctrl+L  Clear         Ctrl+H  Help[/]",
             "[#4d5566]Ctrl+R  Rooms         Ctrl+U  Users[/]",
             "[#4d5566]F1  Toggle sidebar    Esc  Close modal[/]",
+            "",
+            "[bold #e6edf3]🔐 Security[/]",
+            "[#4d5566]/identity           — Show your fingerprint",
+            "[#4d5566]/keys              — Show all known fingerprints",
+            "[#4d5566]/verify @user      — Show user's fingerprint",
+            "",
+            "[bold #e6edf3]📁 Files[/]",
+            "[#4d5566]/filesend <path>   — Send encrypted file",
+            "[#4d5566]/files             — List file transfers",
         ]
         self.chat_panel.add_message(ChatMessage("System", "\n".join(lines), "system"))
+        self.chat_panel.add_message(ChatMessage("System", "💡 Tip: Just type messages normally to chat!", "system"))
 
     # ── Password handlers ─────────────────────────────────────────────────────
 
@@ -1042,6 +1073,10 @@ class ModernChatApp(App):
                 self.status_bar.refresh()
                 self.query_one("#room-header", Static).update(f" #{room.lstrip('#')}")
                 self.chat_panel.add_message(ChatMessage("System", f"Connected to {server} as {nick} in #{room.lstrip('#')}", "success"))
+                self.chat_panel.add_message(ChatMessage("System", "🎉 You're now connected! Start chatting:", "system"))
+                self.chat_panel.add_message(ChatMessage("System", "• Type messages and press Enter to send", "system"))
+                self.chat_panel.add_message(ChatMessage("System", "• Try /help for commands • /users to see who's online", "system"))
+                self.chat_panel.add_message(ChatMessage("System", "• Use /join #roomname to join other rooms", "system"))
                 try:
                     if self.net.identity:
                         if self.keystore.store_identity_key(self.net.identity, f"{nick}@{server}"):
@@ -1066,6 +1101,11 @@ class ModernChatApp(App):
             self.status_bar.state = UIState.ERROR
             self.status_bar.refresh()
             self.chat_panel.add_message(ChatMessage("System", f"Connection error: {e}", "error"))
+            self.chat_panel.add_message(ChatMessage("System", "💡 Try these solutions:", "system"))
+            self.chat_panel.add_message(ChatMessage("System", "• Check server address (e.g., localhost:12345)", "system"))
+            self.chat_panel.add_message(ChatMessage("System", "• Make sure server is running with: python server.py --tls", "system"))
+            self.chat_panel.add_message(ChatMessage("System", "• Try disabling TLS if testing locally", "system"))
+            self.chat_panel.add_message(ChatMessage("System", "• Press Ctrl+N to try connecting again", "system"))
 
     async def _initialize_p2p(self, nick: str, room: str) -> None:
         try:
