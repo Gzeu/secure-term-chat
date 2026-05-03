@@ -461,10 +461,10 @@ class ModernChatApp(App):
         background: #161b22;
         border: solid #30363d;
         border-title-color: #388bfd;
-        padding: 2 3;
+        padding: 1;
         width: 60;
         height: auto;
-        max-height: 80vh;
+        max-height: 90vh;
     }
     #modal-box.modal-wide {
         width: 80;
