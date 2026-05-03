@@ -11,9 +11,10 @@ quantcrypt>=0.3.0
 websockets>=12.0
 aiortc>=1.6.0
 
-# Enhanced Security Features
-bcrypt>=4.1.0  # For keystore encryption
-argon2-cffi>=23.1.0  # Alternative key derivation
+# Enhanced Security enhancements
+bcrypt>=4.1.0
+argon2-cffi>=23.1.0
+cryptography>=41.0.0  # Alternative key derivation
 
 # Terminal UI
 textual>=0.60

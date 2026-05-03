@@ -9,6 +9,7 @@ import time
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, Container, ScrollableContainer
@@ -33,6 +34,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
 
 # Import existing client
 from client import ChatNetworkClient
+from encrypted_keystore import EncryptedKeystore, create_keystore, load_keystore, verify_keystore_password
 
 class UIState(Enum):
     CONNECTING = "connecting"
@@ -89,6 +91,55 @@ class ChatMessage:
             content_text = f"[#c9d1d9]{self.content}[/]"
         
         return Text.assemble(prefix, sender_text, content_text)
+
+class PasswordSetupModal(ModalScreen):
+    """Password setup modal for keystore"""
+    
+    BINDINGS = [("escape", "dismiss", "Close")]
+    
+    def compose(self) -> ComposeResult:
+        with Container(id="password-modal"):
+            yield Static("🔐 Setup Keystore Password", classes="modal-title")
+            
+            with Vertical(classes="form-container"):
+                yield Static("🔒 Protect your identity keys with a strong password", classes="form-help")
+                
+                yield Label("🔑 Password:", classes="form-label")
+                yield Input(placeholder="Enter strong password...", password=True, id="password-input", classes="form-input")
+                
+                yield Label("🔄 Confirm Password:", classes="form-label")
+                yield Input(placeholder="Confirm password...", password=True, id="confirm-password-input", classes="form-input")
+                
+                yield Label("🛡️ Key Derivation:", classes="form-label")
+                yield Select(
+                    [("🔥 Argon2 (Recommended)", "argon2"), ("🔧 bcrypt", "bcrypt"), ("🔓 PBKDF2", "pbkdf2")],
+                    value="argon2",
+                    id="kdf-select",
+                    classes="form-select"
+                )
+                
+                with Horizontal(classes="button-container"):
+                    yield Button("🚀 Setup", variant="primary", id="setup-btn", classes="btn-primary")
+                    yield Button("❌ Cancel", id="cancel-btn", classes="btn-secondary")
+
+class PasswordModal(ModalScreen):
+    """Password entry modal for keystore unlock"""
+    
+    BINDINGS = [("escape", "dismiss", "Close")]
+    
+    def compose(self) -> ComposeResult:
+        with Container(id="password-modal"):
+            yield Static("🔐 Unlock Keystore", classes="modal-title")
+            
+            with Vertical(classes="form-container"):
+                yield Static("🔒 Enter your keystore password to unlock identity keys", classes="form-help")
+                
+                yield Label("🔑 Password:", classes="form-label")
+                yield Input(placeholder="Enter password...", password=True, id="password-input", classes="form-input")
+                
+                with Horizontal(classes="button-container"):
+                    yield Button("🔓 Unlock", variant="primary", id="unlock-btn", classes="btn-primary")
+                    yield Button("❌ Cancel", id="cancel-btn", classes="btn-secondary")
 
 class ConnectionModal(ModalScreen):
     """Beautiful connection modal"""
@@ -375,7 +426,7 @@ class ModernChatApp(App):
     }
     
     /* Modal Styles */
-    #connection-modal, #settings-modal {
+    #connection-modal, #settings-modal, #password-modal {
         background: #161b22;
         border: solid #30363d;
         padding: 2;
@@ -399,6 +450,12 @@ class ModernChatApp(App):
         color: #f0f6fc;
         margin: 1 0 0 0;
         text-style: bold;
+    }
+    
+    .form-help {
+        color: #8b949e;
+        margin: 0 0 1 0;
+        text-style: italic;
     }
     
     .form-input, .form-select {
@@ -586,6 +643,9 @@ class ModernChatApp(App):
     def __init__(self):
         super().__init__()
         self.net: Optional[ChatNetworkClient] = None
+        self.keystore: Optional[EncryptedKeystore] = None
+        self.keystore_password: Optional[str] = None
+        self.keystore_dir = Path.home() / ".secure-term-chat"
         self.chat_panel = ChatPanel()
         self.user_list = UserListPanel()
         self.status_bar = StatusBar()
@@ -616,6 +676,9 @@ class ModernChatApp(App):
     
     def on_mount(self) -> None:
         """Initialize the application"""
+        # Check keystore status
+        self._check_keystore_status()
+        
         # Focus the input box
         input_box = self.query_one("#message-input", Input)
         self.set_focus(input_box)
@@ -631,6 +694,98 @@ class ModernChatApp(App):
             "success"
         ))
     
+    def _check_keystore_status(self) -> None:
+        """Check keystore status and show appropriate modal"""
+        keystore_path = self.keystore_dir / "secure_keystore.json"
+        
+        if keystore_path.exists():
+            # Keystore exists, need password
+            self.chat_panel.add_message(ChatMessage(
+                "System",
+                "🔒 Keystore detected. Please enter password to unlock.",
+                "system"
+            ))
+            self.push_screen(PasswordModal())
+        else:
+            # No keystore, need setup
+            self.chat_panel.add_message(ChatMessage(
+                "System",
+                "🔐 No keystore found. Please setup password for identity protection.",
+                "system"
+            ))
+            self.push_screen(PasswordSetupModal())
+    
+    async def setup_keystore(self, password: str, confirm_password: str, kdf: str) -> bool:
+        """Setup new keystore"""
+        try:
+            if password != confirm_password:
+                self.chat_panel.add_message(ChatMessage(
+                    "System",
+                    "❌ Passwords do not match",
+                    "error"
+                ))
+                return False
+            
+            if len(password) < 8:
+                self.chat_panel.add_message(ChatMessage(
+                    "System",
+                    "❌ Password must be at least 8 characters long",
+                    "error"
+                ))
+                return False
+            
+            # Create keystore
+            self.keystore = create_keystore(self.keystore_dir, password, kdf)
+            self.keystore_password = password
+            
+            self.chat_panel.add_message(ChatMessage(
+                "System",
+                f"✅ Keystore created with {kdf.upper()} key derivation",
+                "success"
+            ))
+            
+            return True
+            
+        except Exception as e:
+            self.chat_panel.add_message(ChatMessage(
+                "System",
+                f"❌ Error creating keystore: {e}",
+                "error"
+            ))
+            return False
+    
+    async def unlock_keystore(self, password: str) -> bool:
+        """Unlock existing keystore"""
+        try:
+            # Verify password
+            if not verify_keystore_password(self.keystore_dir, password):
+                self.chat_panel.add_message(ChatMessage(
+                    "System",
+                    "❌ Invalid password",
+                    "error"
+                ))
+                return False
+            
+            # Load keystore
+            self.keystore = load_keystore(self.keystore_dir, password)
+            self.keystore_password = password
+            
+            self.chat_panel.add_message(ChatMessage(
+                "System",
+                "✅ Keystore unlocked successfully",
+                "success"
+            ))
+            
+            return True
+            
+        except Exception as e:
+            self.chat_panel.add_message(ChatMessage(
+                "System",
+                f"❌ Error unlocking keystore: {e}",
+                "error"
+            ))
+            return False
+    
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses"""
         if event.button.id == "send-btn":
@@ -645,6 +800,56 @@ class ModernChatApp(App):
             await self.reset_settings()
         elif event.button.id == "cancel-settings":
             self.dismiss_screen()
+        elif event.button.id == "setup-btn":
+            await self.handle_password_setup()
+        elif event.button.id == "unlock-btn":
+            await self.handle_password_unlock()
+    
+    async def handle_password_setup(self) -> None:
+        """Handle password setup"""
+        try:
+            password = self.query_one("#password-input", Input).value.strip()
+            confirm_password = self.query_one("#confirm-password-input", Input).value.strip()
+            kdf = self.query_one("#kdf-select", Select).value
+            
+            success = await self.setup_keystore(password, confirm_password, kdf)
+            
+            if success:
+                self.dismiss_screen()
+                # Show connection modal
+                self.push_screen(ConnectionModal())
+            else:
+                # Keep modal open for retry
+                pass
+                
+        except Exception as e:
+            self.chat_panel.add_message(ChatMessage(
+                "System",
+                f"❌ Error in password setup: {e}",
+                "error"
+            ))
+    
+    async def handle_password_unlock(self) -> None:
+        """Handle password unlock"""
+        try:
+            password = self.query_one("#password-input", Input).value.strip()
+            
+            success = await self.unlock_keystore(password)
+            
+            if success:
+                self.dismiss_screen()
+                # Show connection modal
+                self.push_screen(ConnectionModal())
+            else:
+                # Keep modal open for retry
+                pass
+                
+        except Exception as e:
+            self.chat_panel.add_message(ChatMessage(
+                "System",
+                f"❌ Error in password unlock: {e}",
+                "error"
+            ))
     
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         """Handle input submission"""
@@ -806,6 +1011,15 @@ class ModernChatApp(App):
                 ))
                 return
             
+            # Check keystore status
+            if not self.keystore:
+                self.chat_panel.add_message(ChatMessage(
+                    "System",
+                    "❌ Keystore not available. Please setup password first.",
+                    "error"
+                ))
+                return
+            
             # Disconnect existing connection
             if self.net and self.net._connected:
                 await self.disconnect()
@@ -835,6 +1049,24 @@ class ModernChatApp(App):
                     f"✅ Connected to {server} as {nick} in {room}",
                     "success"
                 ))
+                
+                # Store identity in keystore
+                try:
+                    identity_key = self.net.identity
+                    if identity_key:
+                        keystore_success = self.keystore.store_identity_key(identity_key, f"{nick}@{server}")
+                        if keystore_success:
+                            self.chat_panel.add_message(ChatMessage(
+                                "System",
+                                "🔐 Identity key stored in encrypted keystore",
+                                "success"
+                            ))
+                except Exception as e:
+                    self.chat_panel.add_message(ChatMessage(
+                        "System",
+                        f"⚠️ Warning: Could not store identity key: {e}",
+                        "warning"
+                    ))
                 
                 # Add current user to user list
                 self.user_list.add_user(nick, self.net.fingerprint, "online")
