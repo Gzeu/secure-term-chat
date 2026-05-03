@@ -38,6 +38,7 @@ from encrypted_keystore import EncryptedKeystore, create_keystore, load_keystore
 from p2p_manager import P2PManager, P2PState, PeerInfo, create_p2p_manager, is_p2p_available
 from performance_monitor import MetricsCollector, AlertManager, create_metrics_collector, create_alert_manager
 from room_manager import RoomManager, RoomType, create_room_manager
+from file_transfer import FileTransferManager, create_file_transfer_manager
 
 class UIState(Enum):
     CONNECTING = "connecting"
@@ -675,6 +676,10 @@ class ModernChatApp(App):
         self.room_manager: Optional[RoomManager] = None
         self.room_management_enabled = True
         
+        # File transfer
+        self.file_transfer_manager: Optional[FileTransferManager] = None
+        self.file_transfer_enabled = True
+        
         self.chat_panel = ChatPanel()
         self.user_list = UserListPanel()
         self.status_bar = StatusBar()
@@ -707,6 +712,9 @@ class ModernChatApp(App):
         """Initialize the application"""
         # Initialize room management
         self._initialize_room_management()
+        
+        # Initialize file transfer
+        self._initialize_file_transfer()
         
         # Initialize performance monitoring
         self._initialize_performance_monitoring()
@@ -844,6 +852,31 @@ class ModernChatApp(App):
             self.chat_panel.add_message(ChatMessage(
                 "System",
                 f"❌ Error initializing room management: {e}",
+                "error"
+            ))
+    
+    def _initialize_file_transfer(self) -> None:
+        """Initialize file transfer components"""
+        try:
+            if self.file_transfer_enabled:
+                self.file_transfer_manager = create_file_transfer_manager()
+                
+                self.chat_panel.add_message(ChatMessage(
+                    "System",
+                    "📁 File transfer system initialized",
+                    "success"
+                ))
+            else:
+                self.chat_panel.add_message(ChatMessage(
+                    "System",
+                    "📁 File transfer disabled",
+                    "warning"
+                ))
+                
+        except Exception as e:
+            self.chat_panel.add_message(ChatMessage(
+                "System",
+                f"❌ Error initializing file transfer: {e}",
                 "error"
             ))
     
@@ -985,6 +1018,119 @@ class ModernChatApp(App):
                 "error"
             ))
     
+    async def open_file_transfer(self) -> None:
+        """Open file transfer interface"""
+        try:
+            if self.file_transfer_manager:
+                # Create a test file to demonstrate functionality
+                test_data = b"This is a test file for the enhanced file transfer system.\n" \
+                               b"It demonstrates security, compression, and encryption features.\n" \
+                               b"Created at: " + time.ctime().decode()
+                
+                test_filename = f"test_file_{int(time.time())}.txt"
+                
+                # Upload test file
+                success, file_id, message = await self.file_transfer_manager.upload_file(
+                    test_filename,
+                    test_data,
+                    self.room_id if self.net else "test_room",
+                    self.user_id if self.net else "test_user",
+                    compression_type=CompressionType.GZIP,
+                    encryption_type=EncryptionType.AES256_GCM
+                )
+                
+                if success:
+                    self.chat_panel.add_message(ChatMessage(
+                        "System",
+                        f"📁 Uploaded test file: {test_filename} ({len(test_data)} bytes) -> {file_id[:8]}...",
+                        "success"
+                    ))
+                    
+                    # Get file info
+                    file_info = self.file_transfer_manager.get_file_info(file_id)
+                    if file_info:
+                        self.chat_panel.add_message(ChatMessage(
+                            "System",
+                            f"📊 File info: {file_info.filename} ({file_info.file_size} bytes)",
+                            "system"
+                        ))
+                        
+                        # Show compression and encryption info
+                        compression_ratio = "N/A"
+                        if file_info.is_compressed:
+                            compression_ratio = f"{(1 - len(file_data) / len(file_data)):.1%}"
+                        
+                        self.chat_panel.add_message(ChatMessage(
+                            "System",
+                            f"🗜️ Compression: {file_info.compression_type.value} ({compression_ratio} reduction)",
+                            "system"
+                        ))
+                        
+                        self.chat_panel.add_message(
+                            "System",
+                            f"🔐 Encryption: {file_info.encryption_type.value}",
+                            "system"
+                        )
+                        
+                        # Show chunk info
+                        self.chat_panel.add_message(
+                            "System",
+                            f"📦 Chunks: {file_info.chunk_count} ({self.file_transfer_manager.chunk_size} bytes each)",
+                            "system"
+                        )
+                        
+                        # Test download
+                        download_success, downloaded_data, error = await self.file_transfer_manager.download_file(
+                            file_id,
+                            self.user_id if self.net else "test_user"
+                        )
+                        
+                        if download_success:
+                            self.chat_panel.add_message(
+                                "System",
+                                f"✅ Downloaded and verified file: {len(downloaded_data)} bytes",
+                                "success"
+                            )
+                            
+                            # Verify integrity
+                            if downloaded_data == test_data:
+                                self.chat_panel.add_message(
+                                    "System",
+                                    "✅ File integrity verified",
+                                    "success"
+                                )
+                            else:
+                                self.chat_panel.add_message(
+                                    "System",
+                                    "❌ File integrity check failed",
+                                    "error"
+                                )
+                        else:
+                            self.chat_panel.add_message(
+                                "System",
+                                f"❌ Download failed: {error}",
+                                "error"
+                            )
+                else:
+                    self.chat_panel.add_message(
+                        "System",
+                        f"❌ Failed to upload test file: {message}",
+                        "error"
+                    )
+            else:
+                self.chat_panel.add_message(
+                    "System",
+                    "❌ File transfer not available",
+                    "error"
+                )
+                
+        except Exception as e:
+            self.chat_panel.add_message(
+                "System",
+                f"❌ Error opening file transfer: {e}",
+                "error"
+            )
+    
     def _on_p2p_peer_connected(self, peer_id: str):
         """Handle P2P peer connection"""
         self.chat_panel.add_message(ChatMessage(
@@ -1025,6 +1171,8 @@ class ModernChatApp(App):
             await self.save_settings()
         elif event.button.id == "room-management-btn":
             await self.open_room_management()
+        elif event.button.id == "file-transfer-btn":
+            await self.open_file_transfer()
         elif event.button.id == "reset-settings":
             await self.reset_settings()
         elif event.button.id == "cancel-settings":
