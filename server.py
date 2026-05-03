@@ -1,9 +1,23 @@
 #!/usr/bin/env python3
+# ──────────────────────────────────────────────────
+# Main Server
+# ──────────────────────────────────────────────────
 # server.py — Discovery & Relay Server for secure-term-chat
 # Handles: room management, peer discovery, relay of encrypted blobs.
 # Does NOT decrypt anything — operates on opaque ciphertext.
 
 from __future__ import annotations
+
+# ──────────────────────────────────────────────────
+# Auto-scaling Integration
+# ──────────────────────────────────────────────────
+try:
+    from auto_scaling import ScalingConfiguration, create_auto_scaling_manager
+    from scaling_controller import create_scaling_controller
+    from performance_monitor import create_metrics_collector
+    AUTO_SCALING_AVAILABLE = True
+except ImportError:
+    AUTO_SCALING_AVAILABLE = False
 import asyncio
 import argparse
 import json
@@ -189,6 +203,12 @@ class ChatServer:
         self._use_tls = use_tls
         self._server_identity = IdentityKey.generate()
         log.info(f"Server fingerprint: {self._server_identity.fingerprint()}")
+        
+        # Auto-scaling components
+        self._auto_scaling_enabled = AUTO_SCALING_AVAILABLE
+        self._scaling_controller = None
+        self._metrics_collector = None
+        self._max_connections = 1000  # Default connection limit
         
         if use_tls:
             self._ensure_tls_certificates()
