@@ -1019,7 +1019,14 @@ class ModernChatApp(App):
                 return
             if self.net and self.net._connected:
                 await self.disconnect()
-            self.net = ChatNetworkClient(server, nick, room, use_tls)
+            # Parse server string into host and port
+            if ':' in server:
+                host, port_str = server.rsplit(':', 1)
+                port = int(port_str)
+            else:
+                host = server
+                port = 12345  # default port
+            self.net = ChatNetworkClient(host, port, nick, room, use_tls)
             # FIX: set _connecting guard so update_status() doesn't overwrite CONNECTING state
             self._connecting = True
             self.status_bar.state = UIState.CONNECTING
