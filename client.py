@@ -864,9 +864,12 @@ class ChatNetworkClient:
         return len_bytes + body
 
     async def _send(self, data: bytes) -> None:
-        if self._writer and not self._writer.is_closing():
-            self._writer.write(data)
-            await self._writer.drain()
+        """Send frame to server with explicit flush for TLS compatibility"""
+        self._writer.write(data)
+        await self._writer.drain()
+        # Additional flush for TLS buffering issues
+        if hasattr(self._writer, 'transport') and hasattr(self._writer.transport, 'write'):
+            self._writer.transport.write(b'')  # Trigger flush
 
     async def disconnect(self) -> None:
         self._connected = False

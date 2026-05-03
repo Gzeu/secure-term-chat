@@ -627,9 +627,12 @@ class ChatServer:
 
     @staticmethod
     async def _send_raw(writer: asyncio.StreamWriter, data: bytes) -> None:
-        """Send raw data"""
+        """Send raw data with explicit flush for TLS compatibility"""
         writer.write(data)
         await writer.drain()
+        # Additional flush for TLS buffering issues
+        if hasattr(writer, 'transport') and hasattr(writer.transport, 'write'):
+            writer.transport.write(b'')  # Trigger flush
 
 
 async def main():
