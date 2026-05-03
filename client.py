@@ -1049,10 +1049,24 @@ class ChatApp(App):
                 await self.net.request_room_list()
                 # Auto-request user list for current room
                 await self._request_user_list()
-                # Start receive loop
-                await self.net.receive_loop()
+                # Start message polling (compatible with existing client)
+                asyncio.create_task(self._message_loop())
         except Exception as e:
             await self.net._msg_queue.put({"type": "error", "msg": f"Network fatal: {e}"})
+    
+    async def _message_loop(self) -> None:
+        """Message polling loop compatible with existing client"""
+        while self.net._connected:
+            try:
+                # Poll for messages with timeout
+                raw = await asyncio.wait_for(self.net._read_frame(), timeout=1.0)
+                await self.net._handle_message(raw)
+            except asyncio.TimeoutError:
+                # Normal timeout, continue polling
+                continue
+            except Exception as e:
+                log.error(f"Message loop error: {e}")
+                break
 
     def _poll_messages(self) -> None:
         while not self.net._msg_queue.empty():
