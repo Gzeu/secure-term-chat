@@ -37,6 +37,7 @@ class Permission(Enum):
     MANAGE_SETTINGS = "manage_settings"
     VIEW_AUDIT_LOG = "view_audit_log"
     SYSTEM_ADMIN = "system_admin"
+    KICK_USERS = "kick_users"
 
 class UserStatus(Enum):
     """User status"""

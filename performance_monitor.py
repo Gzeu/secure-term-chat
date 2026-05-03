@@ -29,6 +29,7 @@ class MetricType(Enum):
     CONNECTIONS = "connections"
     P2P = "p2p"
     MESSAGES = "messages"
+    ERROR_RATE = "error_rate"
 
 class AlertLevel(Enum):
     """Alert severity levels"""
