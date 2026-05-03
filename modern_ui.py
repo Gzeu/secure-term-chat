@@ -39,6 +39,7 @@ from p2p_manager import P2PManager, P2PState, PeerInfo, create_p2p_manager, is_p
 from performance_monitor import MetricsCollector, AlertManager, create_metrics_collector, create_alert_manager
 from room_manager import RoomManager, RoomType, create_room_manager
 from file_transfer import FileTransferManager, create_file_transfer_manager
+from user_manager import UserManager, create_user_manager
 
 class UIState(Enum):
     CONNECTING = "connecting"
@@ -680,6 +681,10 @@ class ModernChatApp(App):
         self.file_transfer_manager: Optional[FileTransferManager] = None
         self.file_transfer_enabled = True
         
+        # User management
+        self.user_manager: Optional[UserManager] = None
+        self.user_management_enabled = True
+        
         self.chat_panel = ChatPanel()
         self.user_list = UserListPanel()
         self.status_bar = StatusBar()
@@ -715,6 +720,9 @@ class ModernChatApp(App):
         
         # Initialize file transfer
         self._initialize_file_transfer()
+        
+        # Initialize user management
+        self._initialize_user_management()
         
         # Initialize performance monitoring
         self._initialize_performance_monitoring()
@@ -877,6 +885,31 @@ class ModernChatApp(App):
             self.chat_panel.add_message(ChatMessage(
                 "System",
                 f"❌ Error initializing file transfer: {e}",
+                "error"
+            ))
+    
+    def _initialize_user_management(self) -> None:
+        """Initialize user management components"""
+        try:
+            if self.user_management_enabled:
+                self.user_manager = create_user_manager()
+                
+                self.chat_panel.add_message(ChatMessage(
+                    "System",
+                    "👥 User management system initialized",
+                    "success"
+                ))
+            else:
+                self.chat_panel.add_message(ChatMessage(
+                    "System",
+                    "👥 User management disabled",
+                    "warning"
+                ))
+                
+        except Exception as e:
+            self.chat_panel.add_message(ChatMessage(
+                "System",
+                f"❌ Error initializing user management: {e}",
                 "error"
             ))
     
@@ -1123,7 +1156,13 @@ class ModernChatApp(App):
                     "❌ File transfer not available",
                     "error"
                 )
-                
+        else:
+            self.chat_panel.add_message(
+                "System",
+                "❌ File transfer not available",
+                "error"
+            )
+            
         except Exception as e:
             self.chat_panel.add_message(
                 "System",
@@ -1131,35 +1170,260 @@ class ModernChatApp(App):
                 "error"
             )
     
-    def _on_p2p_peer_connected(self, peer_id: str):
-        """Handle P2P peer connection"""
+    async def open_user_management(self) -> None:
+        """Open user management interface"""
+        try:
+            if self.user_manager:
+                # Create test users to demonstrate functionality
+                from user_manager import UserRole
+                
+                # Create test users
+                success1, user1_id = await self.user_manager.create_user(
+                    "alice_admin", "alice@example.com", "secure123456", 
+                    "Alice Admin", "System administrator with full access",
+                    role=UserRole.ADMIN
+                )
+                
+                success2, user2_id = await self.user_manager.create_user(
+                    "bob_moderator", "bob@example.com", "secure123456",
+                    "Bob Moderator", "Room moderator with limited admin access",
+                    role=UserRole.MODERATOR
+                )
+                
+                success3, user3_id = await self.user_manager.create_user(
+                    "charlie_member", "charlie@example.com", "secure123456",
+                    "Charlie Member", "Regular user with basic permissions",
+                    role=UserRole.MEMBER
+                )
+            
+            if success1 and user1_id:
+                self.chat_panel.add_message(ChatMessage(
+                    "System",
+                    f"👥 Created admin user: alice_admin ({user1_id[:8]}...)",
+                    "success"
+                ))
+                
+                # Get user info
+                user_info = self.user_manager.get_user_by_id(user1_id)
+                if user_info:
+                    self.chat_panel.add_message(ChatMessage(
+                        "System",
+                        f"📊 User info: {user_info.username} ({user_info.role.value})",
+                        "system"
+                    ))
+                    
+                    # Show role and permissions
+                    self.chat_panel.add_message(ChatMessage(
+                        "System",
+                        f"🔐 Role: {user_info.role.value} with {len(user_info.permissions)} permissions",
+                        "system"
+                    ))
+                    
+                    self.chat_panel.add_message(
+                        "System",
+                        f"📝 Status: {user_info.status.value}",
+                        "system"
+                    )
+                    
+                    # Test authentication
+                    auth_success, session_id = await self.user_manager.authenticate_user("alice_admin", "secure123456")
+                    if auth_success:
+                        self.chat_panel.add_message(
+                            "System",
+                            f"✅ Authentication successful: {session_id[:8]}...",
+                            "success"
+                        )
+                    else:
+                        self.chat_panel.add_message(
+                            "System",
+                            f"❌ Authentication failed",
+                            "error"
+                        )
+            
+            if success2 and user2_id:
+                self.chat_panel.add_message(ChatMessage(
+                    "System",
+                    f"👥 Created moderator user: bob_moderator ({user2_id[:8]}...)",
+                    "success"
+                ))
+            
+            if success3 and user3_id:
+                self.chat_panel.add_message(ChatMessage(
+                    "System",
+                    f"👥 Created member user: charlie_member ({user3_id[:8]}...)",
+                    "success"
+                ))
+            
+            # Show global statistics
+            stats = self.user_manager.get_global_statistics()
+            self.chat_panel.add_message(ChatMessage(
+                "System",
+                f"📊 Global stats: {stats['total_users']} users, {stats['active_users']} active",
+                "system"
+            ))
+            
+            # Test user management operations
+            if user2_id:
+                # Promote moderator to admin
+                promote_success = self.user_manager.promote_user(user2_id, UserRole.ADMIN)
+                if promote_success:
+                    self.chat_panel.add_message(
+                        "System",
+                        f"📈 Promoted bob_moderator to admin",
+                        "success"
+                    )
+            
+            # Test session management
+            if user1_id:
+                sessions = self.user_manager.session_manager.get_user_sessions(user1_id)
+                self.chat_panel.add_message(
+                    "System",
+                    f"🔐 Active sessions for alice_admin: {len(sessions)}",
+                    "system"
+                )
+        
+        else:
+            self.chat_panel.add_message(
+                "System",
+                "❌ User management not available",
+                "error"
+            )
+            
+    except Exception as e:
+        self.chat_panel.add_message(
+            "System",
+            f"❌ Error opening user management: {e}",
+            "error"
+        )
+
+def _on_p2p_peer_connected(self, peer_id: str):
+    """Handle P2P peer connection"""
+    self.chat_panel.add_message(ChatMessage(
+        "System",
+        f"🌐 P2P connected to {peer_id}",
+        "success"
+    ))
+    self.status_bar.p2p_peers = len(self.p2p_manager.get_connected_peers())
+
+def _on_p2p_peer_disconnected(self, peer_id: str):
+    """Handle P2P peer disconnection"""
+    self.chat_panel.add_message(ChatMessage(
+        "System",
+        f"🌐 P2P disconnected from {peer_id}",
+        "warning"
+    ))
+    self.status_bar.p2p_peers = len(self.p2p_manager.get_connected_peers())
+
+def _on_p2p_message_received(self, peer_id: str, message: str):
+    """Handle P2P message received"""
+    self.chat_panel.add_message(ChatMessage(
+        peer_id,
+        message,
+        "p2p"
+    ))
+
+async def send_message(self) -> None:
+    """Send a message"""
+    input_box = self.query_one("#message-input", Input)
+    message_text = input_box.value.strip()
+    
+    if not message_text:
+        return
+    
+    if not self.net or not self.net._connected:
         self.chat_panel.add_message(ChatMessage(
             "System",
-            f"🌐 P2P connected to {peer_id}",
+            "❌ Not connected to server. Press Ctrl+N to connect.",
+            "error"
+        ))
+        input_box.value = ""
+        return
+    
+    try:
+        if message_text.startswith("/"):
+            # Handle commands
+            await self.handle_command(message_text)
+        else:
+            # Send regular message
+            await self.net.send_room_message(message_text)
+            self.chat_panel.add_message(ChatMessage(
+                "You",
+                message_text,
+                "chat",
+                room=self.net.room
+            ))
+            self.status_bar.message_count += 1
+            
+            # Track message for performance monitoring
+            if self.metrics_collector:
+                self.metrics_collector.increment_message_counter(is_p2p=False)
+            
+            # Also send via P2P if available
+            if self.p2p_manager and self.p2p_manager.state == P2PState.CONNECTED:
+                p2p_sent = await self.p2p_manager.broadcast_message(message_text)
+                if p2p_sent > 0:
+                    # Track P2P messages
+                    if self.metrics_collector:
+                        for _ in range(p2p_sent):
+                            self.metrics_collector.increment_message_counter(is_p2p=True)
+                    
+                    self.chat_panel.add_message(ChatMessage(
+                        "System",
+                        f"🌐 Sent via P2P to {p2p_sent} peers",
+                        "system"
+                    ))
+        
+        input_box.value = ""
+        
+    except Exception as e:
+        self.chat_panel.add_message(ChatMessage(
+            "System",
+            f"❌ Error sending message: {e}",
+            "error"
+        ))
+
+async def handle_command(self, command: str) -> None:
+    """Handle slash commands"""
+    parts = command[1:].split()
+    cmd = parts[0].lower() if parts else ""
+    args = parts[1:] if len(parts) > 1 else []
+    
+    if cmd == "help":
+        self.show_help()
+    elif cmd == "clear":
+        self.chat_panel.clear_messages()
+        self.chat_panel.add_message(ChatMessage(
+            "System",
+            "✅ Chat history cleared",
             "success"
         ))
-        self.status_bar.p2p_peers = len(self.p2p_manager.get_connected_peers())
-    
-    def _on_p2p_peer_disconnected(self, peer_id: str):
-        """Handle P2P peer disconnection"""
+    elif cmd == "quit" or cmd == "exit":
+        await self.disconnect()
+        self.exit()
+    elif cmd == "connect":
+        self.push_screen(ConnectionModal())
+    elif cmd == "settings":
+        self.push_screen(SettingsModal())
+    elif cmd == "rooms":
+        await self.show_room_list()
+    elif cmd == "users":
+        await self.show_user_list()
+    elif cmd == "nick" and args:
+        await self.change_nick(args[0])
+    elif cmd == "join" and args:
+        await self.join_room(args[0])
+    elif cmd == "part" or cmd == "leave":
+        await self.leave_room()
+    else:
         self.chat_panel.add_message(ChatMessage(
             "System",
-            f"🌐 P2P disconnected from {peer_id}",
-            "warning"
+            f"❌ Unknown command: {command}",
+            "error"
         ))
-        self.status_bar.p2p_peers = len(self.p2p_manager.get_connected_peers())
-    
-    def _on_p2p_message_received(self, message):
-        """Handle P2P message received"""
-        # Forward to regular message handling
-        asyncio.create_task(self.process_message({
-            "type": "chat",
-            "from": message.sender_id,
-            "msg": message.data,
-            "room": message.room
-        }))
-    
-    async def on_button_pressed(self, event: Button.Pressed) -> None:
+
+def show_help(self) -> None:
+    """Show comprehensive help"""
+    help_text = """
         """Handle button presses"""
         if event.button.id == "send-btn":
             await self.send_message()
@@ -1173,6 +1437,8 @@ class ModernChatApp(App):
             await self.open_room_management()
         elif event.button.id == "file-transfer-btn":
             await self.open_file_transfer()
+        elif event.button.id == "user-management-btn":
+            await self.open_user_management()
         elif event.button.id == "reset-settings":
             await self.reset_settings()
         elif event.button.id == "cancel-settings":
