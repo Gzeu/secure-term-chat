@@ -1095,7 +1095,7 @@ class ModernChatApp(App):
                 # Create a test file to demonstrate functionality
                 test_data = b"This is a test file for the enhanced file transfer system.\n" \
                                b"It demonstrates security, compression, and encryption features.\n" \
-                               b"Created at: " + time.ctime().encode()
+                               b"Created at: " + str(time.ctime()).encode()
                 
                 test_filename = f"test_file_{int(time.time())}.txt"
                 
