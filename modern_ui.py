@@ -2138,6 +2138,7 @@ def show_help(self) -> None:
             self.pop_screen()
 
 # Main entry point
+# Main entry point
 if __name__ == "__main__":
     app = ModernChatApp()
     app.run()
