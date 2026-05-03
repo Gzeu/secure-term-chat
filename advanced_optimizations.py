@@ -3,6 +3,7 @@ Advanced optimizations for secure-term-chat
 """
 
 import asyncio
+import time
 from typing import Dict, List, Optional
 
 # Connection manager for efficient connection handling
@@ -10,20 +11,37 @@ class ConnectionManager:
     def __init__(self):
         self.connections: Dict[str, asyncio.Queue] = {}
         self.active_connections: set = set()
+        self.connection_timestamps: Dict[str, float] = {}
     
     def add_connection(self, conn_id: str, queue: asyncio.Queue):
         self.connections[conn_id] = queue
         self.active_connections.add(conn_id)
+        self.connection_timestamps[conn_id] = time.time()
     
     def remove_connection(self, conn_id: str):
         self.connections.pop(conn_id, None)
         self.active_connections.discard(conn_id)
+        self.connection_timestamps.pop(conn_id, None)
     
     def get_connection(self, conn_id: str) -> Optional[asyncio.Queue]:
         return self.connections.get(conn_id)
     
     def get_active_count(self) -> int:
         return len(self.active_connections)
+    
+    def cleanup_stale(self, timeout: float = 300.0) -> int:
+        """Remove stale connections older than timeout seconds"""
+        current_time = time.time()
+        stale_connections = []
+        
+        for conn_id, timestamp in self.connection_timestamps.items():
+            if current_time - timestamp > timeout:
+                stale_connections.append(conn_id)
+        
+        for conn_id in stale_connections:
+            self.remove_connection(conn_id)
+        
+        return len(stale_connections)
 
 # Message buffer for batch processing
 class MessageBuffer:

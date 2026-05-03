@@ -291,6 +291,32 @@ class MetricsCollector:
             "error_rate": app.error_rate,
             "uptime_seconds": app.uptime_seconds
         }
+    
+    def get_report(self) -> str:
+        """Generate a performance report"""
+        current_metrics = self.get_current_metrics()
+        if not current_metrics:
+            return "No metrics available yet"
+        
+        report = f"""
+Performance Report - {time.strftime('%Y-%m-%d %H:%M:%S')}
+============================================
+CPU Usage: {current_metrics.get('cpu_percent', 0):.1f}%
+Memory Usage: {current_metrics.get('memory_percent', 0):.1f}% ({current_metrics.get('memory_used_mb', 0):.1f} MB)
+Disk Usage: {current_metrics.get('disk_usage_percent', 0):.1f}%
+Network: {current_metrics.get('network_sent_mb', 0):.2f} MB sent, {current_metrics.get('network_recv_mb', 0):.2f} MB received
+Active Connections: {current_metrics.get('active_connections', 0)}
+Message Rate: {current_metrics.get('message_rate', 0):.2f} msg/s
+P2P Connections: {current_metrics.get('p2p_connections', 0)}
+P2P Message Rate: {current_metrics.get('p2p_message_rate', 0):.2f} msg/s
+Server Latency: {current_metrics.get('server_latency_ms', 0):.1f} ms
+P2P Latency: {current_metrics.get('p2p_latency_ms', 0):.1f} ms
+Error Rate: {current_metrics.get('error_rate', 0):.2f}%
+Uptime: {current_metrics.get('uptime_seconds', 0):.1f} seconds
+============================================
+        """.strip()
+        
+        return report
 
 class AlertManager:
     """Manages performance alerts and notifications"""
