@@ -23,7 +23,7 @@ from textual.binding import Binding
 from textual.screen import ModalScreen
 from textual.message import Message
 from textual import work
-from textual.renderables import RenderableType
+from typing import Union
 from rich.text import Text
 from rich.markup import escape
 from rich.table import Table
@@ -277,7 +277,7 @@ class StatusBar(Static):
         self.start_time = time.time()
         self.message_count = 0
     
-    def render(self) -> RenderableType:
+    def render(self) -> Union[str, Table, Text]:
         """Render enhanced status bar"""
         state_config = {
             UIState.CONNECTING: ("🔄 Connecting", "#ff79c6"),
@@ -344,7 +344,7 @@ class UserListPanel(Static):
             del self.users[nick]
             self.refresh()
     
-    def render(self) -> RenderableType:
+    def render(self) -> Union[str, Table, Text]:
         """Render enhanced user list"""
         if not self.users:
             return "[dim #6e7681]No users online[/]"
@@ -410,7 +410,7 @@ class ChatPanel(Static):
         self.messages = []
         self.refresh()
     
-    def render(self) -> RenderableType:
+    def render(self) -> Union[str, Table, Text]:
         """Render enhanced chat panel"""
         if not self.messages:
             welcome_text = """
@@ -1095,7 +1095,7 @@ class ModernChatApp(App):
                 # Create a test file to demonstrate functionality
                 test_data = b"This is a test file for the enhanced file transfer system.\n" \
                                b"It demonstrates security, compression, and encryption features.\n" \
-                               f"Created at: {time.ctime()}".encode()
+                               b"Created at: " + time.ctime().encode()
                 
                 test_filename = f"test_file_{int(time.time())}.txt"
                 
@@ -1186,7 +1186,7 @@ class ModernChatApp(App):
                         "System",
                         f"❌ Failed to upload test file: {message}",
                         "error"
-                    ))
+                    )
             else:
                 self.chat_panel.add_message(
                     "System",
@@ -1412,11 +1412,12 @@ class ModernChatApp(App):
                 "System",
                 f"❌ Error opening audit and compliance: {e}",
                 "error"
-            )
-    
+            ))
+
     def _on_p2p_peer_connected(self, peer_id: str):
         self.status_bar.p2p_peers = len(self.p2p_manager.get_connected_peers())
 
+# ... (rest of the code remains the same)
     def _on_p2p_peer_disconnected(self, peer_id: str):
         """Handle P2P peer disconnection"""
         self.chat_panel.add_message(ChatMessage(
