@@ -23,6 +23,9 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Header, Footer, Input, RichLog, Static, ProgressBar
 from textual import events
 
+# Configure logging
+log = logging.getLogger(__name__)
+
 from utils import (
     IdentityKey, SessionKey,
     derive_session_key, derive_room_key,
