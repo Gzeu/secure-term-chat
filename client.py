@@ -447,7 +447,10 @@ class ChatNetworkClient:
             "identity_pub": self.identity.public_bytes().hex(),
             "session_pub":  self.session.public_bytes().hex(),
         })
-        await self._send(build_frame(MessageType.HELLO, hello, self.identity))
+        hello_frame = build_frame(MessageType.HELLO, hello, self.identity)
+        log.debug(f"Sending HELLO: {len(hello_frame)} bytes")
+        await self._send(hello_frame)
+        log.debug("HELLO sent, waiting for HELLO_ACK")
 
         try:
             raw = await asyncio.wait_for(self._read_frame(), timeout=15.0)

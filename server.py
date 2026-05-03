@@ -286,7 +286,9 @@ class ChatServer:
             "your_nick":     nick,
         })
         ack_frame = build_frame(MessageType.HELLO_ACK, ack_payload, self._server_identity)
+        log.debug(f"Sending HELLO_ACK to {addr_str}: {len(ack_frame)} bytes")
         await self._send_raw(writer, ack_frame)
+        log.debug(f"HELLO_ACK sent successfully to {addr_str}")
         return peer
 
     async def _reader_loop(self, peer: Peer) -> None:
