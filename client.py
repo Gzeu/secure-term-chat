@@ -888,7 +888,7 @@ class ChatNetworkClient:
 
 
 # ──────────────────────────────────────────────────
-# Textual TUI
+# Enhanced Textual TUI
 # ──────────────────────────────────────────────────
 class ChatApp(App):
     CSS = """
