@@ -739,9 +739,13 @@ class ModernChatApp(App):
         # Check keystore status
         self._check_keystore_status()
         
-        # Focus the input box
-        input_box = self.query_one("#message-input", Input)
-        self.set_focus(input_box)
+        # Focus the input box (if available)
+        try:
+            input_box = self.query_one("#message-input", Input)
+            self.set_focus(input_box)
+        except:
+            # Input box not available yet, will focus later
+            pass
         
         # Set up periodic tasks
         self.set_interval(1.0, self.update_status)
@@ -1608,7 +1612,7 @@ class ModernChatApp(App):
             success = await self.setup_keystore(password, confirm_password, kdf)
             
             if success:
-                self.dismiss_screen()
+                self.pop_screen()
                 # Show connection modal
                 self.push_screen(ConnectionModal())
             else:
@@ -1630,7 +1634,7 @@ class ModernChatApp(App):
             success = await self.unlock_keystore(password)
             
             if success:
-                self.dismiss_screen()
+                self.pop_screen()
                 # Show connection modal
                 self.push_screen(ConnectionModal())
             else:
@@ -1651,7 +1655,7 @@ class ModernChatApp(App):
         elif event.button.id == "connect-btn":
             await self.handle_connect()
         elif event.button.id == "cancel-btn":
-            self.dismiss_screen()
+            self.pop_screen()
         elif event.button.id == "save-settings":
             await self.save_settings()
         elif event.button.id == "room-management-btn":
@@ -1665,7 +1669,7 @@ class ModernChatApp(App):
         elif event.button.id == "reset-settings":
             await self.reset_settings()
         elif event.button.id == "cancel-settings":
-            self.dismiss_screen()
+            self.pop_screen()
         elif event.button.id == "setup-btn":
             await self.handle_password_setup()
         elif event.button.id == "unlock-btn":
@@ -1754,7 +1758,7 @@ class ModernChatApp(App):
                 # Start message handling
                 asyncio.create_task(self.handle_messages())
                 
-                self.dismiss_screen()
+                self.pop_screen()
             else:
                 self.status_bar.state = UIState.ERROR
                 self.chat_panel.add_message(ChatMessage(
@@ -1898,7 +1902,7 @@ class ModernChatApp(App):
             "✅ Settings saved successfully",
             "success"
         ))
-        self.dismiss_screen()
+        self.pop_screen()
     
     async def reset_settings(self) -> None:
         """Reset settings to defaults"""
