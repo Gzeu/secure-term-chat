@@ -278,6 +278,12 @@ class UserListPanel(Static):
             del self.users[nick]
             self.refresh()
 
+    def update_user_status(self, nick: str, status: str):
+        if nick in self.users:
+            self.users[nick]["status"] = status
+            self.users[nick]["last_seen"] = time.time()
+            self.refresh()
+
     def render(self) -> Union[str, Table]:
         if not self.users:
             return "[dim #4d5566]  no users online[/]"
@@ -559,6 +565,8 @@ class ModernChatApp(App):
         self.user_list = UserListPanel()
         self.status_bar = StatusBar()
         self.side_panel_visible = True
+        # FIX: track connecting state to prevent update_status() from overwriting it
+        self._connecting = False
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -580,24 +588,77 @@ class ModernChatApp(App):
         yield Footer()
 
     def on_mount(self) -> None:
-        self._initialize_room_management()
-        self._initialize_file_transfer()
-        self._initialize_user_management()
-        self._initialize_audit_compliance()
-        self._initialize_performance_monitoring()
-        self._check_keystore_status()
-        try:
-            self.set_focus(self.query_one("#message-input", Input))
-        except Exception:
-            pass
-        self.set_interval(1.0, self.update_status)
-        self.set_interval(5.0, self.update_ui)
-        self.set_interval(10.0, self.update_performance_metrics)
+        boot_ok: List[str] = []
+        boot_err: List[str] = []
+
+        def _init(label: str, fn):
+            try:
+                fn()
+                boot_ok.append(label)
+            except Exception as e:
+                boot_err.append(f"{label}: {e}")
+
+        _init("rooms", self._initialize_room_management_silent)
+        _init("file-transfer", self._initialize_file_transfer_silent)
+        _init("user-mgmt", self._initialize_user_management_silent)
+        _init("audit", self._initialize_audit_compliance_silent)
+        _init("monitoring", self._initialize_performance_monitoring_silent)
+
+        # Single grouped boot message
+        if boot_ok:
+            self.chat_panel.add_message(ChatMessage(
+                "System",
+                f"Subsystems ready: {', '.join(boot_ok)}",
+                "success",
+            ))
+        for err in boot_err:
+            self.chat_panel.add_message(ChatMessage("System", f"Init error — {err}", "error"))
+
         self.chat_panel.add_message(ChatMessage(
             "System",
             "Welcome to secure-term-chat!  Ctrl+N to connect · Ctrl+H for help.",
             "success",
         ))
+
+        self._check_keystore_status()
+
+        # FIX: use call_after_refresh so focus lands after any modal is pushed
+        self.call_after_refresh(self._focus_input)
+
+        self.set_interval(1.0, self.update_status)
+        self.set_interval(5.0, self.update_ui)
+        self.set_interval(10.0, self.update_performance_metrics)
+
+    def _focus_input(self) -> None:
+        try:
+            self.set_focus(self.query_one("#message-input", Input))
+        except Exception:
+            pass
+
+    # ── Silent initializers (no individual chat messages) ─────────────────────
+
+    def _initialize_room_management_silent(self) -> None:
+        if self.room_management_enabled:
+            self.room_manager = create_room_manager()
+
+    def _initialize_file_transfer_silent(self) -> None:
+        if self.file_transfer_enabled:
+            self.file_transfer_manager = create_file_transfer_manager()
+
+    def _initialize_user_management_silent(self) -> None:
+        if self.user_management_enabled:
+            self.user_manager = create_user_manager()
+
+    def _initialize_audit_compliance_silent(self) -> None:
+        if self.audit_compliance_enabled:
+            self.audit_manager = create_audit_manager()
+
+    def _initialize_performance_monitoring_silent(self) -> None:
+        if self.performance_enabled:
+            self.metrics_collector = create_metrics_collector(interval=1.0)
+            self.alert_manager = create_alert_manager()
+            self._setup_performance_alerts()
+            asyncio.create_task(self.metrics_collector.start_collection())
 
     # ── Keystore ──────────────────────────────────────────────────────────────
 
@@ -639,50 +700,7 @@ class ModernChatApp(App):
             self.chat_panel.add_message(ChatMessage("System", f"Error unlocking keystore: {e}", "error"))
             return False
 
-    # ── Initializers ──────────────────────────────────────────────────────────
-
-    def _initialize_room_management(self) -> None:
-        try:
-            if self.room_management_enabled:
-                self.room_manager = create_room_manager()
-                self.chat_panel.add_message(ChatMessage("System", "Room management initialized.", "success"))
-        except Exception as e:
-            self.chat_panel.add_message(ChatMessage("System", f"Room management error: {e}", "error"))
-
-    def _initialize_file_transfer(self) -> None:
-        try:
-            if self.file_transfer_enabled:
-                self.file_transfer_manager = create_file_transfer_manager()
-                self.chat_panel.add_message(ChatMessage("System", "File transfer system initialized.", "success"))
-        except Exception as e:
-            self.chat_panel.add_message(ChatMessage("System", f"File transfer error: {e}", "error"))
-
-    def _initialize_user_management(self) -> None:
-        try:
-            if self.user_management_enabled:
-                self.user_manager = create_user_manager()
-                self.chat_panel.add_message(ChatMessage("System", "User management initialized.", "success"))
-        except Exception as e:
-            self.chat_panel.add_message(ChatMessage("System", f"User management error: {e}", "error"))
-
-    def _initialize_audit_compliance(self) -> None:
-        try:
-            if self.audit_compliance_enabled:
-                self.audit_manager = create_audit_manager()
-                self.chat_panel.add_message(ChatMessage("System", "Audit & compliance initialized.", "success"))
-        except Exception as e:
-            self.chat_panel.add_message(ChatMessage("System", f"Audit error: {e}", "error"))
-
-    def _initialize_performance_monitoring(self) -> None:
-        try:
-            if self.performance_enabled:
-                self.metrics_collector = create_metrics_collector(interval=1.0)
-                self.alert_manager = create_alert_manager()
-                self._setup_performance_alerts()
-                asyncio.create_task(self.metrics_collector.start_collection())
-                self.chat_panel.add_message(ChatMessage("System", "Performance monitoring started.", "success"))
-        except Exception as e:
-            self.chat_panel.add_message(ChatMessage("System", f"Monitoring error: {e}", "error"))
+    # ── Performance ───────────────────────────────────────────────────────────
 
     def _setup_performance_alerts(self) -> None:
         if self.alert_manager:
@@ -844,17 +862,23 @@ class ModernChatApp(App):
     # ── P2P callbacks ─────────────────────────────────────────────────────────
 
     def _on_p2p_peer_connected(self, peer_id: str):
+        # FIX: set CONNECTED state when a peer actually connects
         self.status_bar.p2p_peers = len(self.p2p_manager.get_connected_peers())
         self.status_bar.p2p_status = P2PState.CONNECTED
         self.status_bar.refresh()
+        self.chat_panel.add_message(ChatMessage("System", f"P2P peer connected: {peer_id}", "success"))
 
     def _on_p2p_peer_disconnected(self, peer_id: str):
         self.chat_panel.add_message(ChatMessage("System", f"P2P disconnected: {peer_id}", "warning"))
-        self.status_bar.p2p_peers = len(self.p2p_manager.get_connected_peers())
+        peers = len(self.p2p_manager.get_connected_peers()) if self.p2p_manager else 0
+        self.status_bar.p2p_peers = peers
+        # FIX: downgrade to CONNECTING (not failed) if we still have the manager running
+        if peers == 0 and self.p2p_manager:
+            self.status_bar.p2p_status = P2PState.CONNECTING
         self.status_bar.refresh()
 
     def _on_p2p_message_received(self, peer_id: str, message: str):
-        self.chat_panel.add_message(ChatMessage(peer_id, message, "p2p"))
+        self.chat_panel.add_message(ChatMessage(peer_id, message, "pm"))
 
     # ── Input handling ────────────────────────────────────────────────────────
 
@@ -902,6 +926,8 @@ class ModernChatApp(App):
             self.exit()
         elif cmd == "connect":
             self.push_screen(ConnectionModal())
+        elif cmd == "disconnect":
+            await self.disconnect()
         elif cmd == "settings":
             self.push_screen(SettingsModal())
         elif cmd == "rooms":
@@ -914,6 +940,11 @@ class ModernChatApp(App):
             await self.join_room(args[0])
         elif cmd in ("part", "leave"):
             await self.leave_room()
+        elif cmd == "me" and args:
+            # /me action
+            action_text = " ".join(args)
+            nick = getattr(self.net, "nickname", "You") if self.net else "You"
+            self.chat_panel.add_message(ChatMessage("System", f"* {nick} {action_text}", "event"))
         else:
             self.chat_panel.add_message(ChatMessage("System", f"Unknown command: {command}  (try /help)", "error"))
 
@@ -922,7 +953,8 @@ class ModernChatApp(App):
             "[bold #e6edf3]Commands[/]",
             "[#4d5566]/connect  /disconnect  /quit[/]",
             "[#4d5566]/nick <name>  /join <room>  /part[/]",
-            "[#4d5566]/rooms  /users  /settings  /clear  /help[/]",
+            "[#4d5566]/me <action>  /rooms  /users[/]",
+            "[#4d5566]/settings  /clear  /help[/]",
             "",
             "[bold #e6edf3]Shortcuts[/]",
             "[#4d5566]Ctrl+N  Connect       Ctrl+S  Settings[/]",
@@ -988,6 +1020,8 @@ class ModernChatApp(App):
             if self.net and self.net._connected:
                 await self.disconnect()
             self.net = ChatNetworkClient(server, nick, room, use_tls)
+            # FIX: set _connecting guard so update_status() doesn't overwrite CONNECTING state
+            self._connecting = True
             self.status_bar.state = UIState.CONNECTING
             self.status_bar.server_info = server
             self.status_bar.user_info = nick
@@ -995,10 +1029,10 @@ class ModernChatApp(App):
             self.status_bar.refresh()
             self.chat_panel.add_message(ChatMessage("System", f"Connecting to {server}…", "system"))
             success = await self.net.connect()
+            self._connecting = False
             if success:
                 self.status_bar.state = UIState.CONNECTED
                 self.status_bar.refresh()
-                # Update room header
                 self.query_one("#room-header", Static).update(f" #{room.lstrip('#')}")
                 self.chat_panel.add_message(ChatMessage("System", f"Connected to {server} as {nick} in #{room.lstrip('#')}", "success"))
                 try:
@@ -1010,13 +1044,18 @@ class ModernChatApp(App):
                 self.user_list.add_user(nick, getattr(self.net, "fingerprint", ""), "online")
                 if self.p2p_enabled:
                     await self._initialize_p2p(nick, room)
+                # FIX: use queue-based message loop
                 asyncio.create_task(self.handle_messages())
                 self.pop_screen()
+                # Return focus to input after modal closes
+                self.call_after_refresh(self._focus_input)
             else:
+                self._connecting = False
                 self.status_bar.state = UIState.ERROR
                 self.status_bar.refresh()
                 self.chat_panel.add_message(ChatMessage("System", "Failed to connect.", "error"))
         except Exception as e:
+            self._connecting = False
             self.status_bar.state = UIState.ERROR
             self.status_bar.refresh()
             self.chat_panel.add_message(ChatMessage("System", f"Connection error: {e}", "error"))
@@ -1030,21 +1069,28 @@ class ModernChatApp(App):
             self.status_bar.p2p_status = P2PState.CONNECTING
             self.status_bar.refresh()
             await self.p2p_manager.start()
+            # FIX: if start() succeeds without peers yet, state stays CONNECTING until
+            # _on_p2p_peer_connected fires. That is correct — no premature CONNECTED here.
         except Exception as e:
             self.status_bar.p2p_status = P2PState.FAILED
             self.status_bar.refresh()
             self.chat_panel.add_message(ChatMessage("System", f"P2P init failed: {e}", "warning"))
 
     async def handle_messages(self) -> None:
-        while self.net and self.net._connected:
-            try:
-                if not self.net._msg_queue.empty():
-                    await self.process_message(self.net._msg_queue.get_nowait())
-                else:
-                    await asyncio.sleep(0.1)
-            except Exception as e:
-                self.chat_panel.add_message(ChatMessage("System", f"Message loop error: {e}", "error"))
-                break
+        """FIX: use await queue.get() instead of polling .empty() + .get_nowait()"""
+        try:
+            queue = self.net._msg_queue
+            while self.net and self.net._connected:
+                try:
+                    msg = await asyncio.wait_for(queue.get(), timeout=1.0)
+                    await self.process_message(msg)
+                except asyncio.TimeoutError:
+                    continue
+                except Exception as e:
+                    self.chat_panel.add_message(ChatMessage("System", f"Message loop error: {e}", "error"))
+                    break
+        except Exception:
+            pass
 
     async def process_message(self, msg: dict) -> None:
         mt = msg.get("type", "unknown")
@@ -1067,13 +1113,30 @@ class ModernChatApp(App):
                 self.user_list.remove_user(parts[1])
         elif mt == "error":
             self.chat_panel.add_message(ChatMessage("System", msg.get("msg", ""), "error"))
+        elif mt == "user_list":
+            # Handle server-sent user list updates
+            users = msg.get("users", [])
+            for u in users:
+                nick = u if isinstance(u, str) else u.get("nick", "")
+                fp = "" if isinstance(u, str) else u.get("fingerprint", "")
+                if nick and nick not in self.user_list.users:
+                    self.user_list.add_user(nick, fp, "online")
 
     async def disconnect(self) -> None:
+        self._connecting = False
         if self.net:
             await self.net.disconnect()
             self.status_bar.state = UIState.DISCONNECTED
+            self.status_bar.server_info = ""
+            self.status_bar.user_info = ""
+            self.status_bar.room_info = ""
             self.status_bar.refresh()
             self.chat_panel.add_message(ChatMessage("System", "Disconnected.", "system"))
+            # Reset room header
+            try:
+                self.query_one("#room-header", Static).update(" #general")
+            except Exception:
+                pass
         if self.p2p_manager:
             await self.p2p_manager.stop()
             self.p2p_manager = None
@@ -1088,12 +1151,21 @@ class ModernChatApp(App):
         self.user_list.refresh()
 
     def update_status(self) -> None:
+        # FIX: don't overwrite CONNECTING or ERROR states set by handle_connect()
+        if self._connecting:
+            return
+        if self.status_bar.state in (UIState.CONNECTING, UIState.ERROR):
+            return
         connected = bool(self.net and self.net._connected)
-        self.status_bar.state = UIState.CONNECTED if connected else UIState.DISCONNECTED
-        self.status_bar.refresh()
+        new_state = UIState.CONNECTED if connected else UIState.DISCONNECTED
+        if self.status_bar.state != new_state:
+            self.status_bar.state = new_state
+            self.status_bar.refresh()
 
     def update_ui(self) -> None:
-        pass
+        # Refresh user list "last seen" timestamps periodically
+        if self.user_list.users:
+            self.user_list.refresh()
 
     async def save_settings(self) -> None:
         self.chat_panel.add_message(ChatMessage("System", "Settings saved.", "success"))
@@ -1109,24 +1181,78 @@ class ModernChatApp(App):
             self.chat_panel.add_message(ChatMessage("System", "Not connected.", "error"))
 
     async def show_user_list(self) -> None:
-        if not (self.net and self.net._connected):
-            self.chat_panel.add_message(ChatMessage("System", "Not connected.", "error"))
+        """FIX: actually display the current user list from sidebar."""
+        if not self.user_list.users:
+            self.chat_panel.add_message(ChatMessage("System", "No users in room yet.", "system"))
+            return
+        lines = ["[bold #e6edf3]Users in room[/]"]
+        status_dot = {"online": "●", "away": "◑", "busy": "○", "offline": "○"}
+        for nick, info in sorted(self.user_list.users.items(), key=lambda u: u[0].lower()):
+            dot = status_dot.get(info["status"], "●")
+            age = int(time.time() - info["last_seen"])
+            seen = "now" if age < 60 else (f"{age // 60}m ago" if age < 3600 else f"{age // 3600}h ago")
+            lines.append(f"[#4d5566]{dot}[/] [#e6edf3]{nick}[/] [dim #4d5566]— {seen}[/]")
+        self.chat_panel.add_message(ChatMessage("System", "\n".join(lines), "system"))
 
     async def change_nick(self, new_nick: str) -> None:
         if self.net and self.net._connected:
-            self.chat_panel.add_message(ChatMessage("System", f"Changing nick to {new_nick}…", "system"))
+            try:
+                old_nick = getattr(self.net, "nickname", "")
+                # Send nick change command if the client supports it
+                if hasattr(self.net, "change_nickname"):
+                    await self.net.change_nickname(new_nick)
+                else:
+                    await self.net.send_command(f"NICK {new_nick}")
+                # Update local state
+                if old_nick and old_nick in self.user_list.users:
+                    info = self.user_list.users.pop(old_nick)
+                    info["nick"] = new_nick
+                    self.user_list.users[new_nick] = info
+                    self.user_list.refresh()
+                self.status_bar.user_info = new_nick
+                self.status_bar.refresh()
+                self.chat_panel.add_message(ChatMessage("System", f"Nick changed: {old_nick} → {new_nick}", "success"))
+            except Exception as e:
+                self.chat_panel.add_message(ChatMessage("System", f"Nick change failed: {e}", "error"))
         else:
             self.chat_panel.add_message(ChatMessage("System", "Not connected.", "error"))
 
     async def join_room(self, room_name: str) -> None:
         if self.net and self.net._connected:
-            self.chat_panel.add_message(ChatMessage("System", f"Joining {room_name}…", "system"))
+            try:
+                clean = room_name.lstrip("#")
+                if hasattr(self.net, "join_room"):
+                    await self.net.join_room(clean)
+                else:
+                    await self.net.send_command(f"JOIN #{clean}")
+                self.status_bar.room_info = clean
+                self.status_bar.refresh()
+                self.query_one("#room-header", Static).update(f" #{clean}")
+                # Clear user list for new room
+                self.user_list.users.clear()
+                self.user_list.refresh()
+                self.chat_panel.add_message(ChatMessage("System", f"Joined #{clean}", "success"))
+            except Exception as e:
+                self.chat_panel.add_message(ChatMessage("System", f"Join failed: {e}", "error"))
         else:
             self.chat_panel.add_message(ChatMessage("System", "Not connected.", "error"))
 
     async def leave_room(self) -> None:
         if self.net and self.net._connected:
-            self.chat_panel.add_message(ChatMessage("System", f"Leaving {self.net.room}…", "system"))
+            try:
+                room = getattr(self.net, "room", "")
+                if hasattr(self.net, "leave_room"):
+                    await self.net.leave_room()
+                else:
+                    await self.net.send_command("PART")
+                self.user_list.users.clear()
+                self.user_list.refresh()
+                self.status_bar.room_info = ""
+                self.status_bar.refresh()
+                self.query_one("#room-header", Static).update(" (no room)")
+                self.chat_panel.add_message(ChatMessage("System", f"Left #{room.lstrip('#')}", "system"))
+            except Exception as e:
+                self.chat_panel.add_message(ChatMessage("System", f"Leave failed: {e}", "error"))
         else:
             self.chat_panel.add_message(ChatMessage("System", "Not connected.", "error"))
 
