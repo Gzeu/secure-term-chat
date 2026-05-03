@@ -36,6 +36,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
 from client import ChatNetworkClient
 from encrypted_keystore import EncryptedKeystore, create_keystore, load_keystore, verify_keystore_password
 from p2p_manager import P2PManager, P2PState, PeerInfo, create_p2p_manager, is_p2p_available
+from performance_monitor import MetricsCollector, AlertManager, create_metrics_collector, create_alert_manager
 
 class UIState(Enum):
     CONNECTING = "connecting"
@@ -663,6 +664,12 @@ class ModernChatApp(App):
         self.keystore_dir = Path.home() / ".secure-term-chat"
         self.p2p_manager: Optional[P2PManager] = None
         self.p2p_enabled = is_p2p_available()
+        
+        # Performance monitoring
+        self.metrics_collector: Optional[MetricsCollector] = None
+        self.alert_manager: Optional[AlertManager] = None
+        self.performance_enabled = True
+        
         self.chat_panel = ChatPanel()
         self.user_list = UserListPanel()
         self.status_bar = StatusBar()
@@ -693,6 +700,9 @@ class ModernChatApp(App):
     
     def on_mount(self) -> None:
         """Initialize the application"""
+        # Initialize performance monitoring
+        self._initialize_performance_monitoring()
+        
         # Check keystore status
         self._check_keystore_status()
         
@@ -703,6 +713,7 @@ class ModernChatApp(App):
         # Set up periodic tasks
         self.set_interval(1.0, self.update_status)
         self.set_interval(5.0, self.update_ui)
+        self.set_interval(10.0, self.update_performance_metrics)
         
         # Show welcome message
         self.chat_panel.add_message(ChatMessage(
@@ -802,6 +813,71 @@ class ModernChatApp(App):
                 "error"
             ))
             return False
+    
+    def _initialize_performance_monitoring(self) -> None:
+        """Initialize performance monitoring components"""
+        try:
+            if self.performance_enabled:
+                self.metrics_collector = create_metrics_collector(interval=1.0)
+                self.alert_manager = create_alert_manager()
+                
+                # Setup alert handlers
+                self._setup_performance_alerts()
+                
+                # Start metrics collection
+                asyncio.create_task(self.metrics_collector.start_collection())
+                
+                self.chat_panel.add_message(ChatMessage(
+                    "System",
+                    "📊 Performance monitoring started",
+                    "success"
+                ))
+            else:
+                self.chat_panel.add_message(ChatMessage(
+                    "System",
+                    "📊 Performance monitoring disabled",
+                    "warning"
+                ))
+                
+        except Exception as e:
+            self.chat_panel.add_message(ChatMessage(
+                "System",
+                f"❌ Error initializing performance monitoring: {e}",
+                "error"
+            ))
+    
+    def _setup_performance_alerts(self) -> None:
+        """Setup performance alert handlers"""
+        if self.alert_manager:
+            def handle_alert(alert_data):
+                alert = alert_data["alert"]
+                self.chat_panel.add_message(ChatMessage(
+                    "System",
+                    f"🚨 {alert.level.value.upper()}: {alert.message} ({alert_data['metric_value']:.1f})",
+                    "error" if alert.level.value in ["critical", "emergency"] else "warning"
+                ))
+            
+            self.alert_manager.add_alert_handler(handle_alert)
+    
+    def update_performance_metrics(self) -> None:
+        """Update performance metrics"""
+        if not self.metrics_collector or not self.alert_manager:
+            return
+        
+        try:
+            # Get current metrics
+            current_metrics = self.metrics_collector.get_current_metrics()
+            
+            # Update P2P metrics if available
+            if self.p2p_manager:
+                p2p_connections = len(self.p2p_manager.get_connected_peers())
+                self.metrics_collector.update_p2p_connections(p2p_connections)
+            
+            # Check alerts
+            self.alert_manager.check_alerts(current_metrics)
+            
+        except Exception as e:
+            log.error(f"Error updating performance metrics: {e}")
     
     async def _initialize_p2p(self, nickname: str, room: str) -> None:
         """Initialize P2P manager"""
@@ -979,10 +1055,19 @@ class ModernChatApp(App):
                 ))
                 self.status_bar.message_count += 1
                 
+                # Track message for performance monitoring
+                if self.metrics_collector:
+                    self.metrics_collector.increment_message_counter(is_p2p=False)
+                
                 # Also send via P2P if available
                 if self.p2p_manager and self.p2p_manager.state == P2PState.CONNECTED:
                     p2p_sent = await self.p2p_manager.broadcast_message(message_text)
                     if p2p_sent > 0:
+                        # Track P2P messages
+                        if self.metrics_collector:
+                            for _ in range(p2p_sent):
+                                self.metrics_collector.increment_message_counter(is_p2p=True)
+                        
                         self.chat_panel.add_message(ChatMessage(
                             "System",
                             f"🌐 Sent via P2P to {p2p_sent} peers",
@@ -1291,6 +1376,14 @@ class ModernChatApp(App):
             self.p2p_manager = None
             self.status_bar.p2p_status = P2PState.DISCONNECTED
             self.status_bar.p2p_peers = 0
+        
+        # Stop performance monitoring
+        if self.metrics_collector:
+            self.metrics_collector.stop_collection()
+            self.metrics_collector = None
+        
+        if self.alert_manager:
+            self.alert_manager = None
             
             # Clear user list
             self.user_list.users.clear()

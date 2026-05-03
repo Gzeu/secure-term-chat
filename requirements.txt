@@ -16,6 +16,9 @@ bcrypt>=4.1.0
 argon2-cffi>=23.1.0
 cryptography>=41.0.0  # Alternative key derivation
 
+# Performance monitoring
+psutil>=5.9.0  # System metrics collection
+
 # Terminal UI
 textual>=0.60
 # rich>=13.0  # Included in textual, but can be explicit
