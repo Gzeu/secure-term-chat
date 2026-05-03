@@ -1343,8 +1343,88 @@ class ModernChatApp(App):
                 )
                 
                 if event_id:
-    ))
-    self.status_bar.p2p_peers = len(self.p2p_manager.get_connected_peers())
+                    self.chat_panel.add_message(ChatMessage(
+                        "System",
+                        f"📋 Audit system accessed: {event_id[:8]}...",
+                        "success"
+                    ))
+                    
+                    # Show audit statistics
+                    stats = self.audit_manager.get_audit_statistics()
+                    self.chat_panel.add_message(ChatMessage(
+                        "System",
+                        f"📊 Audit stats: {stats['total_events']} events, {stats['compliance_rules']['enabled']} rules",
+                        "system"
+                    ))
+                    
+                    # Show compliance summary
+                    from audit_compliance import ComplianceFramework
+                    gdpr_summary = self.audit_manager.get_compliance_summary(ComplianceFramework.GDPR)
+                    self.chat_panel.add_message(ChatMessage(
+                        "System",
+                        f"🔒 GDPR compliance: {gdpr_summary['compliance_rate']:.1f}% compliant",
+                        "system"
+                    ))
+                    
+                    # Test compliance report generation
+                    end_time = time.time()
+                    start_time = end_time - (7 * 24 * 3600)  # Last 7 days
+                    
+                    report_id = await self.audit_manager.generate_compliance_report(
+                        ComplianceFramework.GDPR,
+                        start_time,
+                        end_time
+                    )
+                    
+                    if report_id:
+                        self.chat_panel.add_message(ChatMessage(
+                            "System",
+                            f"📊 Generated GDPR report: {report_id[:8]}...",
+                            "success"
+                        ))
+                        
+                        # Get report details
+                        report = self.audit_manager.reports.get(report_id)
+                        if report:
+                            self.chat_panel.add_message(ChatMessage(
+                                "System",
+                                f"📈 Compliance status: {report.status.value}",
+                                "system"
+                            ))
+                            
+                            self.chat_panel.add_message(ChatMessage(
+                                "System",
+                                f"⚠️ Violations: {report.violations_count}",
+                                "warning" if report.violations_count > 0 else "success"
+                            ))
+                    else:
+                        self.chat_panel.add_message(ChatMessage(
+                            "System",
+                            "❌ Failed to generate compliance report",
+                            "error"
+                        ))
+                else:
+                    self.chat_panel.add_message(ChatMessage(
+                        "System",
+                        "❌ Failed to access audit system",
+                        "error"
+                    ))
+            else:
+                self.chat_panel.add_message(
+                    "System",
+                    "❌ Audit and compliance not available",
+                    "error"
+                )
+                
+        except Exception as e:
+            self.chat_panel.add_message(ChatMessage(
+                "System",
+                f"❌ Error opening audit and compliance: {e}",
+                "error"
+            )
+    
+    def _on_p2p_peer_connected(self, peer_id: str):
+        self.status_bar.p2p_peers = len(self.p2p_manager.get_connected_peers())
 
 def _on_p2p_peer_disconnected(self, peer_id: str):
     """Handle P2P peer disconnection"""
@@ -2049,12 +2129,9 @@ def show_help(self) -> None:
     def action_toggle_status(self) -> None:
         """Toggle status panel visibility"""
         status_bar = self.query_one("#status-bar")
-        if self.status_visible:
-            status_bar.display = False
-        else:
-            status_bar.display = True
-        self.status_visible = not self.status_visible
-    
+        status_bar.display = not status_bar.display
+        self.status_visible = status_bar.display
+
     def action_dismiss_modal(self) -> None:
         """Dismiss any modal"""
         if self.screen_stack:
