@@ -37,6 +37,7 @@ from client import ChatNetworkClient
 from encrypted_keystore import EncryptedKeystore, create_keystore, load_keystore, verify_keystore_password
 from p2p_manager import P2PManager, P2PState, PeerInfo, create_p2p_manager, is_p2p_available
 from performance_monitor import MetricsCollector, AlertManager, create_metrics_collector, create_alert_manager
+from room_manager import RoomManager, RoomType, create_room_manager
 
 class UIState(Enum):
     CONNECTING = "connecting"
@@ -670,6 +671,10 @@ class ModernChatApp(App):
         self.alert_manager: Optional[AlertManager] = None
         self.performance_enabled = True
         
+        # Room management
+        self.room_manager: Optional[RoomManager] = None
+        self.room_management_enabled = True
+        
         self.chat_panel = ChatPanel()
         self.user_list = UserListPanel()
         self.status_bar = StatusBar()
@@ -700,6 +705,9 @@ class ModernChatApp(App):
     
     def on_mount(self) -> None:
         """Initialize the application"""
+        # Initialize room management
+        self._initialize_room_management()
+        
         # Initialize performance monitoring
         self._initialize_performance_monitoring()
         
@@ -814,6 +822,31 @@ class ModernChatApp(App):
             ))
             return False
     
+    def _initialize_room_management(self) -> None:
+        """Initialize room management components"""
+        try:
+            if self.room_management_enabled:
+                self.room_manager = create_room_manager()
+                
+                self.chat_panel.add_message(ChatMessage(
+                    "System",
+                    "🏠 Room management initialized",
+                    "success"
+                ))
+            else:
+                self.chat_panel.add_message(ChatMessage(
+                    "System",
+                    "🏠 Room management disabled",
+                    "warning"
+                ))
+                
+        except Exception as e:
+            self.chat_panel.add_message(ChatMessage(
+                "System",
+                f"❌ Error initializing room management: {e}",
+                "error"
+            ))
+    
     def _initialize_performance_monitoring(self) -> None:
         """Initialize performance monitoring components"""
         try:
@@ -872,56 +905,83 @@ class ModernChatApp(App):
             if self.p2p_manager:
                 p2p_connections = len(self.p2p_manager.get_connected_peers())
                 self.metrics_collector.update_p2p_connections(p2p_connections)
-            
-            # Check alerts
-            self.alert_manager.check_alerts(current_metrics)
-            
-        except Exception as e:
-            log.error(f"Error updating performance metrics: {e}")
-    
-    async def _initialize_p2p(self, nickname: str, room: str) -> None:
-        """Initialize P2P manager"""
-        try:
-            # Generate unique peer ID
-            peer_id = f"{nickname}_{int(time.time())}_{hash(nickname) % 10000}"
-            
-            # Create P2P manager
-            self.p2p_manager = create_p2p_manager(
-                peer_id, 
-                nickname, 
-                self.net.fingerprint if self.net else "unknown",
-                room
-            )
-            
-            # Set up callbacks
-            self.p2p_manager.on_peer_connected = self._on_p2p_peer_connected
-            self.p2p_manager.on_peer_disconnected = self._on_p2p_peer_disconnected
-            self.p2p_manager.on_message_received = self._on_p2p_message_received
-            
-            # Start P2P with signaling server
-            signaling_server = "ws://localhost:8765"  # Default signaling server
-            success = await self.p2p_manager.start(signaling_server)
-            
-            if success:
-                self.status_bar.p2p_status = P2PState.CONNECTED
-                self.chat_panel.add_message(ChatMessage(
-                    "System",
-                    "🌐 P2P manager started successfully",
-                    "success"
-                ))
-            else:
-                self.status_bar.p2p_status = P2PState.FALLBACK
-                self.chat_panel.add_message(ChatMessage(
-                    "System",
-                    "🔄 P2P not available, using relay mode",
-                    "warning"
-                ))
                 
         except Exception as e:
             self.status_bar.p2p_status = P2PState.FAILED
             self.chat_panel.add_message(ChatMessage(
                 "System",
                 f"❌ P2P initialization failed: {e}",
+                "error"
+            ))
+    
+    async def open_room_management(self) -> None:
+        """Open room management interface"""
+        try:
+            if self.room_manager:
+                # Get user ID
+                user_id = getattr(self.net, 'nickname', 'user') if self.net else 'user'
+                
+                # Create a test room to demonstrate functionality
+                from room_manager import RoomSettings
+                settings = RoomSettings(
+                    max_members=50,
+                    allow_guests=True,
+                    enable_file_sharing=True,
+                    max_file_size_mb=10
+                )
+                
+                room = await self.room_manager.create_room(
+                    name=f"Test Room by {user_id}",
+                    description="A test room created from modern UI",
+                    room_type=RoomType.PUBLIC,
+                    owner_id=user_id,
+                    settings=settings
+                )
+                
+                if room:
+                    self.chat_panel.add_message(ChatMessage(
+                        "System",
+                        f"🏠 Created test room: {room.name} (ID: {room.room_id})",
+                        "success"
+                    ))
+                    
+                    # Join the room
+                    success = await self.room_manager.join_room(room.room_id, user_id)
+                    if success:
+                        self.chat_panel.add_message(ChatMessage(
+                            "System",
+                            f"👥 Joined room: {room.name}",
+                            "success"
+                        ))
+                        
+                        # Update room analytics
+                        self.room_manager.update_room_analytics(room.room_id, message_count=1, user_id=user_id)
+                        
+                        # Show room info
+                        analytics = self.room_manager.get_room_analytics(room.room_id)
+                        if analytics:
+                            self.chat_panel.add_message(ChatMessage(
+                                "System",
+                                f"📊 Room stats: {analytics.total_messages} messages, {analytics.active_users} users",
+                                "system"
+                            ))
+                else:
+                    self.chat_panel.add_message(ChatMessage(
+                        "System",
+                        "❌ Failed to create test room",
+                        "error"
+                    ))
+            else:
+                self.chat_panel.add_message(ChatMessage(
+                    "System",
+                    "❌ Room management not available",
+                    "error"
+                ))
+                
+        except Exception as e:
+            self.chat_panel.add_message(ChatMessage(
+                "System",
+                f"❌ Error opening room management: {e}",
                 "error"
             ))
     
@@ -963,6 +1023,8 @@ class ModernChatApp(App):
             self.dismiss_screen()
         elif event.button.id == "save-settings":
             await self.save_settings()
+        elif event.button.id == "room-management-btn":
+            await self.open_room_management()
         elif event.button.id == "reset-settings":
             await self.reset_settings()
         elif event.button.id == "cancel-settings":
