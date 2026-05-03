@@ -40,6 +40,7 @@ from performance_monitor import MetricsCollector, AlertManager, create_metrics_c
 from room_manager import RoomManager, RoomType, create_room_manager
 from file_transfer import FileTransferManager, create_file_transfer_manager
 from user_manager import UserManager, create_user_manager
+from audit_compliance import AuditManager, AuditEventType, SeverityLevel, create_audit_manager
 
 class UIState(Enum):
     CONNECTING = "connecting"
@@ -685,6 +686,10 @@ class ModernChatApp(App):
         self.user_manager: Optional[UserManager] = None
         self.user_management_enabled = True
         
+        # Audit and compliance
+        self.audit_manager: Optional[AuditManager] = None
+        self.audit_compliance_enabled = True
+        
         self.chat_panel = ChatPanel()
         self.user_list = UserListPanel()
         self.status_bar = StatusBar()
@@ -723,6 +728,9 @@ class ModernChatApp(App):
         
         # Initialize user management
         self._initialize_user_management()
+        
+        # Initialize audit and compliance
+        self._initialize_audit_compliance()
         
         # Initialize performance monitoring
         self._initialize_performance_monitoring()
@@ -910,6 +918,31 @@ class ModernChatApp(App):
             self.chat_panel.add_message(ChatMessage(
                 "System",
                 f"❌ Error initializing user management: {e}",
+                "error"
+            ))
+    
+    def _initialize_audit_compliance(self) -> None:
+        """Initialize audit and compliance components"""
+        try:
+            if self.audit_compliance_enabled:
+                self.audit_manager = create_audit_manager()
+                
+                self.chat_panel.add_message(ChatMessage(
+                    "System",
+                    "📋 Audit and compliance system initialized",
+                    "success"
+                ))
+            else:
+                self.chat_panel.add_message(ChatMessage(
+                    "System",
+                    "📋 Audit and compliance disabled",
+                    "warning"
+                ))
+                
+        except Exception as e:
+            self.chat_panel.add_message(ChatMessage(
+                "System",
+                f"❌ Error initializing audit and compliance: {e}",
                 "error"
             ))
     
@@ -1296,12 +1329,20 @@ class ModernChatApp(App):
             "error"
         )
 
-def _on_p2p_peer_connected(self, peer_id: str):
-    """Handle P2P peer connection"""
-    self.chat_panel.add_message(ChatMessage(
-        "System",
-        f"🌐 P2P connected to {peer_id}",
-        "success"
+    async def open_audit_compliance(self) -> None:
+        """Open audit and compliance interface"""
+        try:
+            if self.audit_manager:
+                # Log audit system access
+                event_id = await self.audit_manager.log_event(
+                    AuditEventType.SYSTEM_CONFIG,
+                    self.user_id if self.net else "system_user",
+                    "Audit system access",
+                    target_resource="audit_compliance_ui",
+                    severity=SeverityLevel.INFO
+                )
+                
+                if event_id:
     ))
     self.status_bar.p2p_peers = len(self.p2p_manager.get_connected_peers())
 
@@ -1439,6 +1480,8 @@ def show_help(self) -> None:
             await self.open_file_transfer()
         elif event.button.id == "user-management-btn":
             await self.open_user_management()
+        elif event.button.id == "audit-compliance-btn":
+            await self.open_audit_compliance()
         elif event.button.id == "reset-settings":
             await self.reset_settings()
         elif event.button.id == "cancel-settings":
