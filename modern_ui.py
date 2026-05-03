@@ -23,6 +23,7 @@ from textual.binding import Binding
 from textual.screen import ModalScreen
 from textual.message import Message
 from textual import work
+from textual.renderables import RenderableType
 from rich.text import Text
 from rich.markup import escape
 from rich.table import Table
@@ -276,7 +277,7 @@ class StatusBar(Static):
         self.start_time = time.time()
         self.message_count = 0
     
-    def render(self) -> Static:
+    def render(self) -> RenderableType:
         """Render enhanced status bar"""
         state_config = {
             UIState.CONNECTING: ("🔄 Connecting", "#ff79c6"),
@@ -313,12 +314,12 @@ class StatusBar(Static):
             f"[bold]{status_text}[/]",
             f"🌐 {self.server_info}" if self.server_info else "",
             f"👤 {self.user_info}" if self.user_info else "",
-            f"[{p2p_color}]{p2p_text} ({self.p2p_peers})[/" if self.p2p_peers > 0 else f"[{p2p_color}]{p2p_text}[/]",
+            f"[{p2p_color}]{p2p_text} ({self.p2p_peers})[/]" if self.p2p_peers > 0 else f"[{p2p_color}]{p2p_text}[/]",
             f"📨 {self.message_count}" if self.message_count > 0 else "",
             f"⏱️ {uptime_str}"
         )
         
-        return Static(table)
+        return table
 
 class UserListPanel(Static):
     """Enhanced user list with status indicators"""
@@ -343,10 +344,10 @@ class UserListPanel(Static):
             del self.users[nick]
             self.refresh()
     
-    def render(self) -> Static:
+    def render(self) -> RenderableType:
         """Render enhanced user list"""
         if not self.users:
-            return Static("[dim #6e7681]No users online[/]")
+            return "[dim #6e7681]No users online[/]"
         
         table = Table(show_header=False, box=None, padding=(0, 1))
         table.add_column("Status", width=2)
@@ -384,7 +385,7 @@ class UserListPanel(Static):
             
             table.add_row(status_icon, nick, fp_short, last_seen_str)
         
-        return Static(table)
+        return table
 
 class ChatPanel(Static):
     """Enhanced chat panel with rich formatting"""
@@ -409,7 +410,7 @@ class ChatPanel(Static):
         self.messages = []
         self.refresh()
     
-    def render(self) -> Static:
+    def render(self) -> RenderableType:
         """Render enhanced chat panel"""
         if not self.messages:
             welcome_text = """
@@ -426,14 +427,14 @@ class ChatPanel(Static):
 [dim #6e7681]Press Ctrl+S for settings or Ctrl+N to connect.[/]
             """.strip()
             
-            return Static(welcome_text)
+            return welcome_text
         
         # Create rich text for all messages
         message_lines = []
         for message in self.messages:
             message_lines.append(message.to_rich_text())
         
-        return Static("\n".join(str(line) for line in message_lines))
+        return "\n".join(str(line) for line in message_lines)
 
 class ModernChatApp(App):
     """Modern terminal chat application with enhanced UI"""
@@ -1088,10 +1089,13 @@ class ModernChatApp(App):
         """Open file transfer interface"""
         try:
             if self.file_transfer_manager:
+                # Add missing imports
+                from file_transfer import CompressionType, EncryptionType
+                
                 # Create a test file to demonstrate functionality
                 test_data = b"This is a test file for the enhanced file transfer system.\n" \
                                b"It demonstrates security, compression, and encryption features.\n" \
-                               b"Created at: " + time.ctime().decode()
+                               f"Created at: {time.ctime()}".encode()
                 
                 test_filename = f"test_file_{int(time.time())}.txt"
                 
@@ -1099,8 +1103,8 @@ class ModernChatApp(App):
                 success, file_id, message = await self.file_transfer_manager.upload_file(
                     test_filename,
                     test_data,
-                    self.room_id if self.net else "test_room",
-                    self.user_id if self.net else "test_user",
+                    self.net.room if self.net else "test_room",
+                    getattr(self.net, "nickname", "test_user") if self.net else "test_user",
                     compression_type=CompressionType.GZIP,
                     encryption_type=EncryptionType.AES256_GCM
                 )
@@ -1124,7 +1128,7 @@ class ModernChatApp(App):
                         # Show compression and encryption info
                         compression_ratio = "N/A"
                         if file_info.is_compressed:
-                            compression_ratio = f"{(1 - len(file_data) / len(file_data)):.1%}"
+                            compression_ratio = f"{(1 - file_info.file_size / len(test_data)):.1%}"
                         
                         self.chat_panel.add_message(ChatMessage(
                             "System",
@@ -1148,7 +1152,7 @@ class ModernChatApp(App):
                         # Test download
                         download_success, downloaded_data, error = await self.file_transfer_manager.download_file(
                             file_id,
-                            self.user_id if self.net else "test_user"
+                            getattr(self.net, "nickname", "test_user") if self.net else "test_user"
                         )
                         
                         if download_success:
@@ -1182,19 +1186,13 @@ class ModernChatApp(App):
                         "System",
                         f"❌ Failed to upload test file: {message}",
                         "error"
-                    )
+                    ))
             else:
                 self.chat_panel.add_message(
                     "System",
                     "❌ File transfer not available",
                     "error"
                 )
-        else:
-            self.chat_panel.add_message(
-                "System",
-                "❌ File transfer not available",
-                "error"
-            )
             
         except Exception as e:
             self.chat_panel.add_message(
@@ -1228,107 +1226,100 @@ class ModernChatApp(App):
                     "Charlie Member", "Regular user with basic permissions",
                     role=UserRole.MEMBER
                 )
-            
-            if success1 and user1_id:
-                self.chat_panel.add_message(ChatMessage(
-                    "System",
-                    f"👥 Created admin user: alice_admin ({user1_id[:8]}...)",
-                    "success"
-                ))
                 
-                # Get user info
-                user_info = self.user_manager.get_user_by_id(user1_id)
-                if user_info:
+                if success1 and user1_id:
                     self.chat_panel.add_message(ChatMessage(
                         "System",
-                        f"📊 User info: {user_info.username} ({user_info.role.value})",
-                        "system"
+                        f"👥 Created admin user: alice_admin ({user1_id[:8]}...)",
+                        "success"
                     ))
                     
-                    # Show role and permissions
-                    self.chat_panel.add_message(ChatMessage(
-                        "System",
-                        f"🔐 Role: {user_info.role.value} with {len(user_info.permissions)} permissions",
-                        "system"
-                    ))
-                    
-                    self.chat_panel.add_message(
-                        "System",
-                        f"📝 Status: {user_info.status.value}",
-                        "system"
-                    )
-                    
-                    # Test authentication
-                    auth_success, session_id = await self.user_manager.authenticate_user("alice_admin", "secure123456")
-                    if auth_success:
+                    # Get user info
+                    user_info = self.user_manager.get_user_by_id(user1_id)
+                    if user_info:
+                        self.chat_panel.add_message(ChatMessage(
+                            "System",
+                            f"📊 User info: {user_info.username} ({user_info.role.value})",
+                            "system"
+                        ))
+                        
+                        # Show role and permissions
+                        self.chat_panel.add_message(ChatMessage(
+                            "System",
+                            f"🔐 Role: {user_info.role.value} with {len(user_info.permissions)} permissions",
+                            "system"
+                        ))
+                        
                         self.chat_panel.add_message(
                             "System",
-                            f"✅ Authentication successful: {session_id[:8]}...",
+                            f"📝 Status: {user_info.status.value}",
+                            "system"
+                        )
+                        
+                        # Test authentication
+                        auth_success, session_id = await self.user_manager.authenticate_user("alice_admin", "secure123456")
+                        if auth_success:
+                            self.chat_panel.add_message(
+                                "System",
+                                f"✅ Authentication successful: {session_id[:8]}...",
+                                "success"
+                            )
+                        else:
+                            self.chat_panel.add_message(
+                                "System",
+                                f"❌ Authentication failed",
+                                "error"
+                            )
+            
+                if success2 and user2_id:
+                    self.chat_panel.add_message(ChatMessage(
+                        "System",
+                        f"👥 Created moderator user: bob_moderator ({user2_id[:8]}...)",
+                        "success"
+                    ))
+            
+                if success3 and user3_id:
+                    self.chat_panel.add_message(ChatMessage(
+                        "System",
+                        f"👥 Created member user: charlie_member ({user3_id[:8]}...)",
+                        "success"
+                    ))
+            
+                # Show global statistics
+                stats = self.user_manager.get_global_statistics()
+                self.chat_panel.add_message(ChatMessage(
+                    "System",
+                    f"📊 Global stats: {stats['total_users']} users, {stats['active_users']} active",
+                    "system"
+                ))
+            
+                # Test user management operations
+                if user2_id:
+                    # Promote moderator to admin
+                    promote_success = self.user_manager.promote_user(user2_id, UserRole.ADMIN)
+                    if promote_success:
+                        self.chat_panel.add_message(
+                            "System",
+                            f"📈 Promoted bob_moderator to admin",
                             "success"
                         )
-                    else:
-                        self.chat_panel.add_message(
-                            "System",
-                            f"❌ Authentication failed",
-                            "error"
-                        )
             
-            if success2 and user2_id:
-                self.chat_panel.add_message(ChatMessage(
-                    "System",
-                    f"👥 Created moderator user: bob_moderator ({user2_id[:8]}...)",
-                    "success"
-                ))
-            
-            if success3 and user3_id:
-                self.chat_panel.add_message(ChatMessage(
-                    "System",
-                    f"👥 Created member user: charlie_member ({user3_id[:8]}...)",
-                    "success"
-                ))
-            
-            # Show global statistics
-            stats = self.user_manager.get_global_statistics()
-            self.chat_panel.add_message(ChatMessage(
-                "System",
-                f"📊 Global stats: {stats['total_users']} users, {stats['active_users']} active",
-                "system"
-            ))
-            
-            # Test user management operations
-            if user2_id:
-                # Promote moderator to admin
-                promote_success = self.user_manager.promote_user(user2_id, UserRole.ADMIN)
-                if promote_success:
+                # Test session management
+                if user1_id:
+                    sessions = self.user_manager.session_manager.get_user_sessions(user1_id)
                     self.chat_panel.add_message(
                         "System",
-                        f"📈 Promoted bob_moderator to admin",
-                        "success"
+                        f"🔐 Active sessions for alice_admin: {len(sessions)}",
+                        "system"
                     )
-            
-            # Test session management
-            if user1_id:
-                sessions = self.user_manager.session_manager.get_user_sessions(user1_id)
-                self.chat_panel.add_message(
-                    "System",
-                    f"🔐 Active sessions for alice_admin: {len(sessions)}",
-                    "system"
-                )
         
-        else:
+        except Exception as e:
             self.chat_panel.add_message(
                 "System",
-                "❌ User management not available",
+                f"❌ Error opening user management: {e}",
                 "error"
             )
-            
-    except Exception as e:
-        self.chat_panel.add_message(
-            "System",
-            f"❌ Error opening user management: {e}",
-            "error"
-        )
-
+    
     async def open_audit_compliance(self) -> None:
         """Open audit and compliance interface"""
         try:
@@ -1336,7 +1327,7 @@ class ModernChatApp(App):
                 # Log audit system access
                 event_id = await self.audit_manager.log_event(
                     AuditEventType.SYSTEM_CONFIG,
-                    self.user_id if self.net else "system_user",
+                    getattr(self.net, "nickname", "system_user") if self.net else "system_user",
                     "Audit system access",
                     target_resource="audit_compliance_ui",
                     severity=SeverityLevel.INFO
@@ -1426,196 +1417,22 @@ class ModernChatApp(App):
     def _on_p2p_peer_connected(self, peer_id: str):
         self.status_bar.p2p_peers = len(self.p2p_manager.get_connected_peers())
 
-def _on_p2p_peer_disconnected(self, peer_id: str):
-    """Handle P2P peer disconnection"""
-    self.chat_panel.add_message(ChatMessage(
-        "System",
-        f"🌐 P2P disconnected from {peer_id}",
-        "warning"
-    ))
-    self.status_bar.p2p_peers = len(self.p2p_manager.get_connected_peers())
-
-def _on_p2p_message_received(self, peer_id: str, message: str):
-    """Handle P2P message received"""
-    self.chat_panel.add_message(ChatMessage(
-        peer_id,
-        message,
-        "p2p"
-    ))
-
-async def send_message(self) -> None:
-    """Send a message"""
-    input_box = self.query_one("#message-input", Input)
-    message_text = input_box.value.strip()
-    
-    if not message_text:
-        return
-    
-    if not self.net or not self.net._connected:
+    def _on_p2p_peer_disconnected(self, peer_id: str):
+        """Handle P2P peer disconnection"""
         self.chat_panel.add_message(ChatMessage(
             "System",
-            "❌ Not connected to server. Press Ctrl+N to connect.",
-            "error"
+            f"🌐 P2P disconnected from {peer_id}",
+            "warning"
         ))
-        input_box.value = ""
-        return
-    
-    try:
-        if message_text.startswith("/"):
-            # Handle commands
-            await self.handle_command(message_text)
-        else:
-            # Send regular message
-            await self.net.send_room_message(message_text)
-            self.chat_panel.add_message(ChatMessage(
-                "You",
-                message_text,
-                "chat",
-                room=self.net.room
-            ))
-            self.status_bar.message_count += 1
-            
-            # Track message for performance monitoring
-            if self.metrics_collector:
-                self.metrics_collector.increment_message_counter(is_p2p=False)
-            
-            # Also send via P2P if available
-            if self.p2p_manager and self.p2p_manager.state == P2PState.CONNECTED:
-                p2p_sent = await self.p2p_manager.broadcast_message(message_text)
-                if p2p_sent > 0:
-                    # Track P2P messages
-                    if self.metrics_collector:
-                        for _ in range(p2p_sent):
-                            self.metrics_collector.increment_message_counter(is_p2p=True)
-                    
-                    self.chat_panel.add_message(ChatMessage(
-                        "System",
-                        f"🌐 Sent via P2P to {p2p_sent} peers",
-                        "system"
-                    ))
-        
-        input_box.value = ""
-        
-    except Exception as e:
-        self.chat_panel.add_message(ChatMessage(
-            "System",
-            f"❌ Error sending message: {e}",
-            "error"
-        ))
+        self.status_bar.p2p_peers = len(self.p2p_manager.get_connected_peers())
 
-async def handle_command(self, command: str) -> None:
-    """Handle slash commands"""
-    parts = command[1:].split()
-    cmd = parts[0].lower() if parts else ""
-    args = parts[1:] if len(parts) > 1 else []
-    
-    if cmd == "help":
-        self.show_help()
-    elif cmd == "clear":
-        self.chat_panel.clear_messages()
+    def _on_p2p_message_received(self, peer_id: str, message: str):
+        """Handle P2P message received"""
         self.chat_panel.add_message(ChatMessage(
-            "System",
-            "✅ Chat history cleared",
-            "success"
+            peer_id,
+            message,
+            "p2p"
         ))
-    elif cmd == "quit" or cmd == "exit":
-        await self.disconnect()
-        self.exit()
-    elif cmd == "connect":
-        self.push_screen(ConnectionModal())
-    elif cmd == "settings":
-        self.push_screen(SettingsModal())
-    elif cmd == "rooms":
-        await self.show_room_list()
-    elif cmd == "users":
-        await self.show_user_list()
-    elif cmd == "nick" and args:
-        await self.change_nick(args[0])
-    elif cmd == "join" and args:
-        await self.join_room(args[0])
-    elif cmd == "part" or cmd == "leave":
-        await self.leave_room()
-    else:
-        self.chat_panel.add_message(ChatMessage(
-            "System",
-            f"❌ Unknown command: {command}",
-            "error"
-        ))
-
-def show_help(self) -> None:
-    """Show comprehensive help"""
-    help_text = """
-        """Handle button presses"""
-        if event.button.id == "send-btn":
-            await self.send_message()
-        elif event.button.id == "connect-btn":
-            await self.handle_connect()
-        elif event.button.id == "cancel-btn":
-            self.dismiss_screen()
-        elif event.button.id == "save-settings":
-            await self.save_settings()
-        elif event.button.id == "room-management-btn":
-            await self.open_room_management()
-        elif event.button.id == "file-transfer-btn":
-            await self.open_file_transfer()
-        elif event.button.id == "user-management-btn":
-            await self.open_user_management()
-        elif event.button.id == "audit-compliance-btn":
-            await self.open_audit_compliance()
-        elif event.button.id == "reset-settings":
-            await self.reset_settings()
-        elif event.button.id == "cancel-settings":
-            self.dismiss_screen()
-        elif event.button.id == "setup-btn":
-            await self.handle_password_setup()
-        elif event.button.id == "unlock-btn":
-            await self.handle_password_unlock()
-    
-    async def handle_password_setup(self) -> None:
-        """Handle password setup"""
-        try:
-            password = self.query_one("#password-input", Input).value.strip()
-            confirm_password = self.query_one("#confirm-password-input", Input).value.strip()
-            kdf = self.query_one("#kdf-select", Select).value
-            
-            success = await self.setup_keystore(password, confirm_password, kdf)
-            
-            if success:
-                self.dismiss_screen()
-                # Show connection modal
-                self.push_screen(ConnectionModal())
-            else:
-                # Keep modal open for retry
-                pass
-                
-        except Exception as e:
-            self.chat_panel.add_message(ChatMessage(
-                "System",
-                f"❌ Error in password setup: {e}",
-                "error"
-            ))
-    
-    async def handle_password_unlock(self) -> None:
-        """Handle password unlock"""
-        try:
-            password = self.query_one("#password-input", Input).value.strip()
-            
-            success = await self.unlock_keystore(password)
-            
-            if success:
-                self.dismiss_screen()
-                # Show connection modal
-                self.push_screen(ConnectionModal())
-            else:
-                # Keep modal open for retry
-                pass
-                
-        except Exception as e:
-            self.chat_panel.add_message(ChatMessage(
-                "System",
-                f"❌ Error in password unlock: {e}",
-                "error"
-            ))
     
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         """Handle input submission"""
@@ -1779,6 +1596,79 @@ def show_help(self) -> None:
             help_text,
             "system"
         ))
+    
+    async def handle_password_setup(self) -> None:
+        """Handle password setup"""
+        try:
+            password = self.query_one("#password-input", Input).value.strip()
+            confirm_password = self.query_one("#confirm-password-input", Input).value.strip()
+            kdf = self.query_one("#kdf-select", Select).value
+            
+            success = await self.setup_keystore(password, confirm_password, kdf)
+            
+            if success:
+                self.dismiss_screen()
+                # Show connection modal
+                self.push_screen(ConnectionModal())
+            else:
+                # Keep modal open for retry
+                pass
+                
+        except Exception as e:
+            self.chat_panel.add_message(ChatMessage(
+                "System",
+                f"❌ Error in password setup: {e}",
+                "error"
+            ))
+    
+    async def handle_password_unlock(self) -> None:
+        """Handle password unlock"""
+        try:
+            password = self.query_one("#password-input", Input).value.strip()
+            
+            success = await self.unlock_keystore(password)
+            
+            if success:
+                self.dismiss_screen()
+                # Show connection modal
+                self.push_screen(ConnectionModal())
+            else:
+                # Keep modal open for retry
+                pass
+                
+        except Exception as e:
+            self.chat_panel.add_message(ChatMessage(
+                "System",
+                f"❌ Error in password unlock: {e}",
+                "error"
+            ))
+    
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle button presses"""
+        if event.button.id == "send-btn":
+            await self.send_message()
+        elif event.button.id == "connect-btn":
+            await self.handle_connect()
+        elif event.button.id == "cancel-btn":
+            self.dismiss_screen()
+        elif event.button.id == "save-settings":
+            await self.save_settings()
+        elif event.button.id == "room-management-btn":
+            await self.open_room_management()
+        elif event.button.id == "file-transfer-btn":
+            await self.open_file_transfer()
+        elif event.button.id == "user-management-btn":
+            await self.open_user_management()
+        elif event.button.id == "audit-compliance-btn":
+            await self.open_audit_compliance()
+        elif event.button.id == "reset-settings":
+            await self.reset_settings()
+        elif event.button.id == "cancel-settings":
+            self.dismiss_screen()
+        elif event.button.id == "setup-btn":
+            await self.handle_password_setup()
+        elif event.button.id == "unlock-btn":
+            await self.handle_password_unlock()
     
     async def handle_connect(self) -> None:
         """Handle connection from modal"""
@@ -1983,10 +1873,10 @@ def show_help(self) -> None:
         
         if self.alert_manager:
             self.alert_manager = None
-            
-            # Clear user list
-            self.user_list.users.clear()
-            self.user_list.refresh()
+        
+        # Clear user list (always)
+        self.user_list.users.clear()
+        self.user_list.refresh()
     
     def update_status(self) -> None:
         """Update status panel"""
@@ -2137,7 +2027,6 @@ def show_help(self) -> None:
         if self.screen_stack:
             self.pop_screen()
 
-# Main entry point
 # Main entry point
 if __name__ == "__main__":
     app = ModernChatApp()
